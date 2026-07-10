@@ -19,8 +19,9 @@ for directory in [DATA_DIR, UPLOAD_DIR, DATABASE_DIR, MODELS_DIR, LOGS_DIR, INDE
     directory.mkdir(parents=True, exist_ok=True)
 
 # Configuration Parameters
-CHUNK_SIZE = 750  # Character limit per chunk
-CHUNK_OVERLAP = 150  # Overlap between consecutive chunks
+DEFAULT_CHUNK_SIZE = 500  # Default character limit per chunk
+DEFAULT_CHUNK_OVERLAP = 100  # Overlap between consecutive chunks
+MAX_CHUNK_LENGTH = 1000  # Absolute maximum limit for a single chunk
 
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 WHISPER_MODEL_NAME = "base"

@@ -143,11 +143,54 @@ with st.sidebar:
     st.markdown(f"**Maximum PDF Size:** {MAX_PDF_SIZE_MB} MB")
     st.markdown(f"**Maximum DOCX Size:** {MAX_DOCX_SIZE_MB} MB")
     st.markdown(f"**Maximum Image Size:** {MAX_IMAGE_SIZE_MB} MB")
-    st.markdown(f"**Maximum Audio Size:** {MAX_AUDIO_SIZE_MB} MB *(Coming in Milestone 3)*")
+    st.markdown(f"**Maximum Audio Size:** {MAX_AUDIO_SIZE_MB} MB")
     st.markdown("**Offline Mode:** `Ready` 🟢")
     
     st.markdown("---")
+    dev_mode = st.checkbox("🔧 Enable Developer Mode", value=st.session_state.get("dev_mode", False), key="dev_mode")
+    if dev_mode:
+        st.markdown("#### ✂️ Chunking Config")
+        st.slider(
+            "Chunk Size (chars)",
+            min_value=100,
+            max_value=1000,
+            value=st.session_state.get("ui_chunk_size", 500),
+            step=50,
+            key="ui_chunk_size"
+        )
+        st.slider(
+            "Chunk Overlap (chars)",
+            min_value=0,
+            max_value=300,
+            value=st.session_state.get("ui_chunk_overlap", 100),
+            step=10,
+            key="ui_chunk_overlap"
+        )
     
+    st.markdown("---")
+    
+    # On-the-fly chunking calculations for backward compatibility
+    for f_name, f_data in st.session_state.parsed_files.items():
+        if "chunks" not in f_data and "documents" in f_data:
+            from src.text_processing import DocumentConverter, ChunkingEngine
+            f_ext = f_data["file_type"]
+            f_cat = "image" if f_ext in ["png", "jpg", "jpeg", "bmp", "tiff"] else ("audio" if f_ext in ["mp3", "wav", "m4a", "flac"] else f_ext)
+            try:
+                ud = DocumentConverter.convert(
+                    documents=f_data["documents"],
+                    source_file=f_data["file_name"],
+                    source_type=f_cat,
+                    processing_time=f_data.get("processing_time", 0.0)
+                )
+                f_data["unified_document"] = ud
+                f_data["chunks"] = ChunkingEngine.chunk_document(
+                    doc=ud,
+                    chunk_size=st.session_state.get("ui_chunk_size", 500),
+                    chunk_overlap=st.session_state.get("ui_chunk_overlap", 100)
+                )
+            except Exception:
+                pass
+
     # Calculate aggregate stats
     total_files = len(st.session_state.parsed_files)
     pdf_count = sum(1 for f in st.session_state.parsed_files.values() if f["file_type"] == "pdf")
@@ -159,6 +202,7 @@ with st.sidebar:
     total_docx_blocks = 0
     total_ocr_blocks = 0
     total_audio_chunks = 0
+    total_chunks = sum(len(f.get("chunks", [])) for f in st.session_state.parsed_files.values())
     total_proc_time = 0.0
     
     for f in st.session_state.parsed_files.values():
@@ -202,6 +246,7 @@ with st.sidebar:
     st.markdown(f"• **Structure Blocks (DOCX):** {total_docx_blocks}")
     st.markdown(f"• **OCR Blocks (Images):** {total_ocr_blocks}")
     st.markdown(f"• **Audio Chunks:** {total_audio_chunks}")
+    st.markdown(f"• **Total Text Chunks:** {total_chunks}")
     
     st.markdown("---")
     
@@ -293,12 +338,33 @@ if uploaded_files:
             parse_duration = time.time() - start_parse_time
             
             # Store in session state
+            # Convert and Chunk
+            from src.text_processing import DocumentConverter, ChunkingEngine
+            category = "image" if ext in ["png", "jpg", "jpeg", "bmp", "tiff"] else ("audio" if ext in ["mp3", "wav", "m4a", "flac"] else ext)
+            unified_doc = DocumentConverter.convert(
+                documents=parsed_docs,
+                source_file=file_name,
+                source_type=category,
+                processing_time=parse_duration
+            )
+            
+            chunk_size = st.session_state.get("ui_chunk_size", 500)
+            chunk_overlap = st.session_state.get("ui_chunk_overlap", 100)
+            
+            chunks = ChunkingEngine.chunk_document(
+                doc=unified_doc,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap
+            )
+
             st.session_state.parsed_files[file_name] = {
                 "file_name": file_name,
                 "file_type": ext,
                 "file_size": len(file_bytes),
                 "file_path": str(saved_path),
                 "documents": parsed_docs,
+                "unified_document": unified_doc,
+                "chunks": chunks,
                 "processing_time": parse_duration
             }
             
@@ -502,3 +568,45 @@ else:
                 # Show specific metadata dictionary
                 st.json(meta, expanded=False)
                 st.markdown("---")
+                
+        # Developer Mode Chunking Details
+        if st.session_state.get("dev_mode", False) and "chunks" in file_data:
+            chunks = file_data["chunks"]
+            with st.expander("🔧 Developer Mode: Chunking Details", expanded=True):
+                st.markdown("#### 📊 Chunking Metrics")
+                m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+                with m_col1:
+                    st.metric("Total Chunks", len(chunks))
+                with m_col2:
+                    avg_size = sum(c.character_count for c in chunks) / len(chunks) if chunks else 0
+                    st.metric("Avg Chunk Size", f"{avg_size:.1f} chars")
+                with m_col3:
+                    total_chars = sum(c.character_count for c in chunks)
+                    st.metric("Total Characters", total_chars)
+                with m_col4:
+                    total_tokens = sum(c.token_estimate for c in chunks)
+                    st.metric("Est. Total Tokens", total_tokens)
+                
+                # Interactive Table
+                st.markdown("#### 📑 Chunks Table")
+                table_data = []
+                for c in chunks:
+                    table_data.append({
+                        "Chunk ID": c.chunk_id,
+                        "Source Reference": c.metadata.get("source_reference", "N/A"),
+                        "Size (chars)": c.character_count,
+                        "Est. Tokens": c.token_estimate,
+                        "Text Preview": c.text[:100] + "..." if len(c.text) > 100 else c.text
+                    })
+                st.dataframe(table_data, use_container_width=True)
+                
+                # Metadata Preview
+                st.markdown("#### ⚙️ Chunk Metadata Inspection")
+                selected_chunk_id = st.selectbox(
+                    "Select a Chunk to inspect its full Metadata JSON:",
+                    options=[c.chunk_id for c in chunks],
+                    key=f"inspect_{name}"
+                )
+                if selected_chunk_id:
+                    selected_chunk = next(c for c in chunks if c.chunk_id == selected_chunk_id)
+                    st.json(selected_chunk.metadata)
