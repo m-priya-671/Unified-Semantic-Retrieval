@@ -99,6 +99,12 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
     }
 
+    .badge-audio {
+        background: linear-gradient(135deg, #a855f7 0%, #7c3aed 100%);
+        color: white !important;
+        box-shadow: 0 2px 8px rgba(168, 85, 247, 0.3);
+    }
+
     /* Metric Sub-cards inside sidebar */
     .sidebar-metric {
         background: rgba(255, 255, 255, 0.015);
@@ -147,10 +153,12 @@ with st.sidebar:
     pdf_count = sum(1 for f in st.session_state.parsed_files.values() if f["file_type"] == "pdf")
     docx_count = sum(1 for f in st.session_state.parsed_files.values() if f["file_type"] == "docx")
     image_count = sum(1 for f in st.session_state.parsed_files.values() if f["file_type"] in ["png", "jpg", "jpeg", "bmp", "tiff"])
+    audio_count = sum(1 for f in st.session_state.parsed_files.values() if f["file_type"] in ["mp3", "wav", "m4a", "flac"])
     
     total_pages = 0
     total_docx_blocks = 0
     total_ocr_blocks = 0
+    total_audio_chunks = 0
     total_proc_time = 0.0
     
     for f in st.session_state.parsed_files.values():
@@ -165,6 +173,9 @@ with st.sidebar:
         elif ext in ["png", "jpg", "jpeg", "bmp", "tiff"]:
             for doc in docs:
                 total_ocr_blocks += len(doc.metadata.get("blocks", []))
+        elif ext in ["mp3", "wav", "m4a", "flac"]:
+            for doc in docs:
+                total_audio_chunks += len(doc.metadata.get("segments", []))
 
     # Section 2: Files Dashboard
     st.markdown("### 📁 Files")
@@ -181,7 +192,7 @@ with st.sidebar:
         st.markdown(f"🖼️ **Images:** {image_count}")
     with col_f2:
         st.markdown(f"📝 **DOCXs:** {docx_count}")
-        st.markdown("🎵 **Audios:** 0 *(M3)*")
+        st.markdown(f"🎵 **Audios:** {audio_count}")
         
     st.markdown("---")
     
@@ -190,7 +201,7 @@ with st.sidebar:
     st.markdown(f"• **Pages Processed (PDF):** {total_pages}")
     st.markdown(f"• **Structure Blocks (DOCX):** {total_docx_blocks}")
     st.markdown(f"• **OCR Blocks (Images):** {total_ocr_blocks}")
-    st.markdown("• **Audio Chunks:** *(Coming in Milestone 3)*")
+    st.markdown(f"• **Audio Chunks:** {total_audio_chunks}")
     
     st.markdown("---")
     
@@ -222,8 +233,8 @@ st.markdown("<div class='banner-subtitle'>Milestone 2: Offline Document Parser &
 # 6. Upload Component
 st.markdown("### 📥 Document Ingestion")
 uploaded_files = st.file_uploader(
-    "Choose PDF, DOCX, or Image files to extract text locally",
-    type=["pdf", "docx", "png", "jpg", "jpeg", "bmp", "tiff"],
+    "Choose PDF, DOCX, Image, or Audio files to extract text locally",
+    type=["pdf", "docx", "png", "jpg", "jpeg", "bmp", "tiff", "mp3", "wav", "m4a", "flac"],
     accept_multiple_files=True,
     help="Files are validated locally and stored offline in data/uploads/"
 )
@@ -314,6 +325,8 @@ else:
             badge_cls = "badge-pdf"
         elif ext == "docx":
             badge_cls = "badge-docx"
+        elif ext in ["mp3", "wav", "m4a", "flac"]:
+            badge_cls = "badge-audio"
         else:
             badge_cls = "badge-image"
             
@@ -327,6 +340,10 @@ else:
         pages_count = "N/A"
         blocks_count = "N/A"
         resolution = "N/A"
+        audio_duration = "N/A"
+        audio_channels = "N/A"
+        audio_sr = "N/A"
+        languages_list = []
         upload_time = first_doc_meta.get("extracted_at", "Just now")
         
         if ext == "pdf":
@@ -344,6 +361,13 @@ else:
             if dims:
                 resolution = f"{dims.get('width', 0)} x {dims.get('height', 0)}"
             pipeline_steps = ["Upload", "Validation", "Image Preprocessing", "OCR Extraction", "Metadata Generated", "Ready for Chunking"]
+        elif ext in ["mp3", "wav", "m4a", "flac"]:
+            parser_used = "AudioProcessor"
+            audio_duration = f"{first_doc_meta.get('duration_sec', 0.0):.2f}s"
+            audio_channels = "Mono" if first_doc_meta.get("channels", 1) == 1 else "Stereo"
+            audio_sr = f"{first_doc_meta.get('sample_rate', 0)} Hz"
+            languages_list = first_doc_meta.get("languages", [])
+            pipeline_steps = ["Upload", "Validation", "Audio Preprocessing", "Speech Recognition", "Metadata Generated", "Ready for Chunking"]
         else:
             pipeline_steps = ["Upload", "Validation", "Processing", "Metadata Generated", "Ready for Chunking"]
 
@@ -367,6 +391,13 @@ else:
             info_table_rows += f"<tr style='border-bottom: 1px solid rgba(255,255,255,0.03);'><td style='padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;'>Number of Pages</td><td style='padding: 6px 0; color: #f8fafc; font-size: 0.9rem;'>{pages_count}</td></tr>"
         elif ext == "docx":
             info_table_rows += f"<tr style='border-bottom: 1px solid rgba(255,255,255,0.03);'><td style='padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;'>Number of Blocks</td><td style='padding: 6px 0; color: #f8fafc; font-size: 0.9rem;'>{blocks_count}</td></tr>"
+        elif ext in ["mp3", "wav", "m4a", "flac"]:
+            lang_str = ", ".join(f"{l.get('language','Unknown').upper()} ({l.get('probability',0.0)*100:.1f}%)" for l in languages_list)
+            info_table_rows += f"""
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Detected Language</td><td style="padding: 6px 0; color: #34d399; font-weight: bold; font-size: 0.9rem;">{lang_str}</td></tr>
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Audio Duration</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{audio_duration}</td></tr>
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Channels / Sample Rate</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{audio_channels} / {audio_sr}</td></tr>
+            """
 
         st.markdown(f"""
         <div class="glass-card" style="padding: 22px; margin-bottom: 25px;">
@@ -403,6 +434,23 @@ else:
             with col_c:
                 dur = doc.metadata.get("processing_duration_sec", 0.0)
                 st.metric("Processing Time", f"{dur:.2f}s")
+                
+        # Display player for audios
+        if ext in ["mp3", "wav", "m4a", "flac"]:
+            st.audio(file_data["file_path"])
+            
+            # Display audio transcription metrics
+            doc = file_data["documents"][0]
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.metric("STT Engine", doc.metadata.get("transcription_engine", "Unknown"))
+            with col_b:
+                langs = doc.metadata.get("languages", [])
+                conf_val = langs[0].get("probability", 0.0) if langs else 0.0
+                st.metric("Detection Conf.", f"{conf_val * 100:.1f}%")
+            with col_c:
+                dur = doc.metadata.get("processing_duration_sec", 0.0)
+                st.metric("Transcription Time", f"{dur:.2f}s")
         
         # Display structures under this card
         docs_list = file_data["documents"]
@@ -417,17 +465,33 @@ else:
                     header = f"Page {meta['page_number']} / {meta['total_pages']}"
                 elif ext == "docx":
                     header = f"Block {meta['block_index']} ({meta['block_type'].capitalize()})"
+                elif ext in ["mp3", "wav", "m4a", "flac"]:
+                    header = "Speech Transcript"
                 else:
                     header = "OCR Extracted Text"
                     
                 st.markdown(f"##### 📍 {header}")
                 st.text_area(
-                    label=f"Text content ({len(doc.text)} chars)",
+                    label=f"Clean Transcript Text ({len(doc.text)} chars)",
                     value=doc.text,
                     height=150,
                     key=f"{name}_{header}",
                     disabled=True
                 )
+                
+                # Show structured audio timeline segment timestamps if available
+                if ext in ["mp3", "wav", "m4a", "flac"] and "segments" in meta and meta["segments"]:
+                    with st.expander("🕒 Show Transcription Timeline Segments", expanded=False):
+                        st.write("Timestamped dialogue timeline:")
+                        timeline_md = ""
+                        for seg in meta["segments"]:
+                            start_min = int(seg['start'] // 60)
+                            start_sec = seg['start'] % 60
+                            end_min = int(seg['end'] // 60)
+                            end_sec = seg['end'] % 60
+                            time_lbl = f"`[{start_min:02d}:{start_sec:05.2f} ➔ {end_min:02d}:{end_sec:05.2f}]`"
+                            timeline_md += f"{time_lbl} &nbsp; {seg['text']}\n\n"
+                        st.markdown(timeline_md, unsafe_allow_html=True)
                 
                 # Show detailed bounding boxes for images if available
                 if ext in ["png", "jpg", "jpeg", "bmp", "tiff"] and "blocks" in meta and meta["blocks"]:

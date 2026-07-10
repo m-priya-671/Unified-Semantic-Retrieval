@@ -119,7 +119,7 @@ Open your browser and navigate to `http://localhost:8501`.
 
 - [x] **Milestone 1**: Core Ingestion (PDF & DOCX parsing, Streamlit UI)
 - [x] **Milestone 2**: Image Processing & OCR (EasyOCR/Tesseract routing, preprocessing pipeline)
-- [ ] **Milestone 3**: Audio Ingestion & Transcription (Whisper integration)
+- [x] **Milestone 3**: Audio Ingestion & Transcription (Whisper integration)
 - [ ] **Milestone 4**: Text Chunking Strategy (Semantic and hierarchical text splitter)
 - [ ] **Milestone 5**: Embeddings & Vector Stores (Local sentence-transformers)
 - [ ] **Milestone 6**: FAISS Index Construction & Search
