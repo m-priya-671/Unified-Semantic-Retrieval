@@ -32,6 +32,7 @@ data/indices/*
 models/easyocr/
 models/faster_whisper/
 models/whisper/
+models/embeddings/
 
 # Streamlit cache
 .streamlit/

@@ -121,7 +121,7 @@ Open your browser and navigate to `http://localhost:8501`.
 - [x] **Milestone 2**: Image Processing & OCR (EasyOCR/Tesseract routing, preprocessing pipeline)
 - [x] **Milestone 3**: Audio Ingestion & Transcription (Whisper integration)
 - [x] **Milestone 4**: Text Chunking Strategy (Semantic and hierarchical text splitter)
-- [ ] **Milestone 5**: Embeddings & Vector Stores (Local sentence-transformers)
+- [x] **Milestone 5**: Embeddings & Vector Stores (Local sentence-transformers)
 - [ ] **Milestone 6**: FAISS Index Construction & Search
 - [ ] **Milestone 7**: Context Retrieval Pipeline & Reranking
 - [ ] **Milestone 8**: Local LLM Integration (Ollama local inference)

@@ -1,5 +1,9 @@
-import streamlit as st
 import os
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+
+import streamlit as st
 import time
 from pathlib import Path
 from src.config.settings import (
@@ -166,13 +170,22 @@ with st.sidebar:
             step=10,
             key="ui_chunk_overlap"
         )
+        st.slider(
+            "Batch Size",
+            min_value=8,
+            max_value=128,
+            value=st.session_state.get("ui_batch_size", 32),
+            step=8,
+            key="ui_batch_size"
+        )
     
     st.markdown("---")
     
-    # On-the-fly chunking calculations for backward compatibility
+    # On-the-fly chunking and embedding calculations for backward compatibility
     for f_name, f_data in st.session_state.parsed_files.items():
-        if "chunks" not in f_data and "documents" in f_data:
+        if ("chunks" not in f_data or "vectors" not in f_data) and "documents" in f_data:
             from src.text_processing import DocumentConverter, ChunkingEngine
+            from src.embedding import EmbeddingManager
             f_ext = f_data["file_type"]
             f_cat = "image" if f_ext in ["png", "jpg", "jpeg", "bmp", "tiff"] else ("audio" if f_ext in ["mp3", "wav", "m4a", "flac"] else f_ext)
             try:
@@ -183,11 +196,18 @@ with st.sidebar:
                     processing_time=f_data.get("processing_time", 0.0)
                 )
                 f_data["unified_document"] = ud
-                f_data["chunks"] = ChunkingEngine.chunk_document(
+                chunks = ChunkingEngine.chunk_document(
                     doc=ud,
                     chunk_size=st.session_state.get("ui_chunk_size", 500),
                     chunk_overlap=st.session_state.get("ui_chunk_overlap", 100)
                 )
+                emb_manager = EmbeddingManager()
+                vectors, updated_chunks = emb_manager.embed_chunks(
+                    chunks=chunks,
+                    batch_size=st.session_state.get("ui_batch_size", 32)
+                )
+                f_data["chunks"] = updated_chunks
+                f_data["vectors"] = vectors
             except Exception:
                 pass
 
@@ -252,8 +272,11 @@ with st.sidebar:
     
     # Section 4: AI Pipeline
     st.markdown("### 🧠 AI Pipeline")
-    st.markdown("• **Embeddings Status:** *N/A (Coming in M5)*")
-    st.markdown("• **Vector Index Status:** *N/A (Coming in M5/6)*")
+    total_embedded = sum(len(f.get("chunks", [])) for f in st.session_state.parsed_files.values())
+    st.markdown(f"• **Embeddings Model:** `MiniLM-L12-v2` 🟢")
+    st.markdown(f"• **Embedding Dimension:** `384` 📏")
+    st.markdown(f"• **Embedded Chunks:** `{total_embedded}` 📑")
+    st.markdown("• **Vector Index Status:** *N/A (Coming in M6)*")
     st.markdown("• **LLM Model Configured:** *N/A (Coming in M8)*")
     
     st.markdown("---")
@@ -340,6 +363,8 @@ if uploaded_files:
             # Store in session state
             # Convert and Chunk
             from src.text_processing import DocumentConverter, ChunkingEngine
+            from src.embedding import EmbeddingManager
+            
             category = "image" if ext in ["png", "jpg", "jpeg", "bmp", "tiff"] else ("audio" if ext in ["mp3", "wav", "m4a", "flac"] else ext)
             unified_doc = DocumentConverter.convert(
                 documents=parsed_docs,
@@ -356,6 +381,12 @@ if uploaded_files:
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap
             )
+            
+            # Embed
+            progress_bar.progress(85, text=f"Generating local L2-normalized embeddings for {len(chunks)} chunks...")
+            emb_manager = EmbeddingManager()
+            batch_size = st.session_state.get("ui_batch_size", 32)
+            vectors, updated_chunks = emb_manager.embed_chunks(chunks, batch_size=batch_size)
 
             st.session_state.parsed_files[file_name] = {
                 "file_name": file_name,
@@ -364,7 +395,8 @@ if uploaded_files:
                 "file_path": str(saved_path),
                 "documents": parsed_docs,
                 "unified_document": unified_doc,
-                "chunks": chunks,
+                "chunks": updated_chunks,
+                "vectors": vectors,
                 "processing_time": parse_duration
             }
             
@@ -569,34 +601,42 @@ else:
                 st.json(meta, expanded=False)
                 st.markdown("---")
                 
-        # Developer Mode Chunking Details
+        # Developer Mode Chunking & Embedding Details
         if st.session_state.get("dev_mode", False) and "chunks" in file_data:
             chunks = file_data["chunks"]
-            with st.expander("🔧 Developer Mode: Chunking Details", expanded=True):
-                st.markdown("#### 📊 Chunking Metrics")
+            with st.expander("🔧 Developer Mode: Chunking & Embedding Details", expanded=True):
+                st.markdown("#### 📊 Chunking & Embedding Metrics")
                 m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+                
+                # Retrieve average embedding time from chunks metadata
+                embed_times = [c.metadata.get("embedding_time_ms", 0.0) for c in chunks if "embedding_time_ms" in c.metadata]
+                avg_emb_time = sum(embed_times) / len(embed_times) if embed_times else 0.0
+                
                 with m_col1:
                     st.metric("Total Chunks", len(chunks))
                 with m_col2:
                     avg_size = sum(c.character_count for c in chunks) / len(chunks) if chunks else 0
                     st.metric("Avg Chunk Size", f"{avg_size:.1f} chars")
                 with m_col3:
-                    total_chars = sum(c.character_count for c in chunks)
-                    st.metric("Total Characters", total_chars)
+                    st.metric("Avg Embedding Time", f"{avg_emb_time:.1f} ms")
                 with m_col4:
                     total_tokens = sum(c.token_estimate for c in chunks)
                     st.metric("Est. Total Tokens", total_tokens)
                 
                 # Interactive Table
-                st.markdown("#### 📑 Chunks Table")
+                st.markdown("#### 📑 Chunks & Vector Preview Table")
                 table_data = []
                 for c in chunks:
+                    v_arr = file_data["vectors"][c.chunk_index] if "vectors" in file_data and len(file_data["vectors"]) > c.chunk_index else None
+                    v_preview = "[" + ", ".join(f"{val:.4f}" for val in v_arr[:8]) + ", ...]" if v_arr is not None else "N/A"
+                    
                     table_data.append({
                         "Chunk ID": c.chunk_id,
                         "Source Reference": c.metadata.get("source_reference", "N/A"),
                         "Size (chars)": c.character_count,
-                        "Est. Tokens": c.token_estimate,
-                        "Text Preview": c.text[:100] + "..." if len(c.text) > 100 else c.text
+                        "L2 Norm": c.metadata.get("embedding_norm", "N/A"),
+                        "Vector Preview (8-dim)": v_preview,
+                        "Text Preview": c.text[:80] + "..." if len(c.text) > 80 else c.text
                     })
                 st.dataframe(table_data, use_container_width=True)
                 
