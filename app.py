@@ -151,6 +151,10 @@ with st.sidebar:
     st.markdown("**Offline Mode:** `Ready` 🟢")
     
     st.markdown("---")
+    from src.vector_store import IndexManager
+    idx_manager = IndexManager()
+    index_info = idx_manager.get_index_info()
+    
     dev_mode = st.checkbox("🔧 Enable Developer Mode", value=st.session_state.get("dev_mode", False), key="dev_mode")
     if dev_mode:
         st.markdown("#### ✂️ Chunking Config")
@@ -178,14 +182,41 @@ with st.sidebar:
             step=8,
             key="ui_batch_size"
         )
+        
+        st.markdown("#### 🗂️ Vector Index Info")
+        st.markdown(f"• **Index Type:** `{index_info.get('index_type', 'N/A')}`")
+        st.markdown(f"• **Dimension:** `{index_info.get('dimension', 'N/A')}`")
+        
+        size_bytes = index_info.get('index_file_size_bytes', 0)
+        st.markdown(f"• **File Size:** `{size_bytes / 1024:.1f} KB`")
+        
+        st.markdown(f"• **Index Version:** `{index_info.get('index_version', 'N/A')}`")
+        st.markdown(f"• **Embedding Version:** `{index_info.get('embedding_version', 'N/A')}`")
+        st.markdown(f"• **Schema Version:** `{index_info.get('schema_version', 'N/A')}`")
+        st.markdown(f"• **Total Documents:** `{index_info.get('total_documents', 0)}`")
+        st.markdown(f"• **Avg Chunks/Doc:** `{index_info.get('average_chunks_per_document', 0.0):.1f}`")
+        
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            if st.button("🔄 Force Reload"):
+                idx_manager.reload_index()
+                st.success("FAISS Index reloaded.")
+                st.rerun()
+        with col_c2:
+            if st.button("🧹 Reset Index", type="secondary"):
+                idx_manager.clear_all()
+                st.session_state.parsed_files = {}
+                st.success("Vector Store cleared.")
+                st.rerun()
     
     st.markdown("---")
     
-    # On-the-fly chunking and embedding calculations for backward compatibility
+    # On-the-fly chunking, embedding, and indexing for backward compatibility
     for f_name, f_data in st.session_state.parsed_files.items():
         if ("chunks" not in f_data or "vectors" not in f_data) and "documents" in f_data:
             from src.text_processing import DocumentConverter, ChunkingEngine
             from src.embedding import EmbeddingManager
+            from src.vector_store import IndexManager
             f_ext = f_data["file_type"]
             f_cat = "image" if f_ext in ["png", "jpg", "jpeg", "bmp", "tiff"] else ("audio" if f_ext in ["mp3", "wav", "m4a", "flac"] else f_ext)
             try:
@@ -208,6 +239,9 @@ with st.sidebar:
                 )
                 f_data["chunks"] = updated_chunks
                 f_data["vectors"] = vectors
+                
+                # Dynamic transactional indexing
+                idx_manager.add_vectors_and_metadata(vectors, updated_chunks)
             except Exception:
                 pass
 
@@ -273,10 +307,12 @@ with st.sidebar:
     # Section 4: AI Pipeline
     st.markdown("### 🧠 AI Pipeline")
     total_embedded = sum(len(f.get("chunks", [])) for f in st.session_state.parsed_files.values())
+    total_indexed = index_info.get("total_vectors", 0)
+    
     st.markdown(f"• **Embeddings Model:** `MiniLM-L12-v2` 🟢")
     st.markdown(f"• **Embedding Dimension:** `384` 📏")
     st.markdown(f"• **Embedded Chunks:** `{total_embedded}` 📑")
-    st.markdown("• **Vector Index Status:** *N/A (Coming in M6)*")
+    st.markdown(f"• **Indexed Vectors:** `{total_indexed}` 🗂️")
     st.markdown("• **LLM Model Configured:** *N/A (Coming in M8)*")
     
     st.markdown("---")
@@ -364,6 +400,7 @@ if uploaded_files:
             # Convert and Chunk
             from src.text_processing import DocumentConverter, ChunkingEngine
             from src.embedding import EmbeddingManager
+            from src.vector_store import IndexManager
             
             category = "image" if ext in ["png", "jpg", "jpeg", "bmp", "tiff"] else ("audio" if ext in ["mp3", "wav", "m4a", "flac"] else ext)
             unified_doc = DocumentConverter.convert(
@@ -383,10 +420,15 @@ if uploaded_files:
             )
             
             # Embed
-            progress_bar.progress(85, text=f"Generating local L2-normalized embeddings for {len(chunks)} chunks...")
+            progress_bar.progress(80, text=f"Generating local L2-normalized embeddings for {len(chunks)} chunks...")
             emb_manager = EmbeddingManager()
             batch_size = st.session_state.get("ui_batch_size", 32)
             vectors, updated_chunks = emb_manager.embed_chunks(chunks, batch_size=batch_size)
+
+            # Index
+            progress_bar.progress(95, text=f"Indexing chunks inside local FAISS database...")
+            idx_manager = IndexManager()
+            idx_manager.add_vectors_and_metadata(vectors, updated_chunks)
 
             st.session_state.parsed_files[file_name] = {
                 "file_name": file_name,
@@ -632,6 +674,7 @@ else:
                     
                     table_data.append({
                         "Chunk ID": c.chunk_id,
+                        "FAISS ID": c.metadata.get("faiss_id", "N/A"),
                         "Source Reference": c.metadata.get("source_reference", "N/A"),
                         "Size (chars)": c.character_count,
                         "L2 Norm": c.metadata.get("embedding_norm", "N/A"),
