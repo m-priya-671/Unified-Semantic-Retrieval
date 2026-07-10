@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Logs
+logs/
+*.log
+
+# Uploaded data
+data/uploads/*
+!data/uploads/.gitkeep
+
+# Databases
+data/database/*
+!data/database/.gitkeep
+
+# Vector indices
+data/indices/*
+!data/indices/.gitkeep
+
+# Downloaded AI models
+models/easyocr/
+models/faster_whisper/
+models/whisper/
+
+# Streamlit cache
+.streamlit/
+
+# IDE files
+.vscode/
+.idea/
+
+# Operating system files
+Thumbs.db
+.DS_Store
+
+# Environment variables
+.env
