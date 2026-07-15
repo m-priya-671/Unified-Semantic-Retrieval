@@ -716,85 +716,100 @@ else:
                     selected_chunk = next(c for c in chunks if c.chunk_id == selected_chunk_id)
                     st.json(selected_chunk.metadata)
 
-# 8. Q&A Semantic Search Playground
+# 8. Q&A Grounded Chat Playground
 st.markdown("---")
-st.markdown("### 🔍 Semantic Search Playground (Pre-LLM context verification)")
-st.info("Input a query in English, Tamil, or Mixed languages to retrieve matching source chunks.")
+st.markdown("### 💬 Grounded Q&A Chat Playground")
+st.info("Ask questions in English, Tamil, or Mixed languages. Answers are strictly grounded on your indexed documents.")
 
-# Query text input
-query_input = st.text_input("Enter your natural language question:", key="qa_query_input")
-search_clicked = st.button("🔍 Execute Semantic Retrieval", key="qa_search_button")
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
-if search_clicked or query_input:
-    if not query_input.strip():
-        st.warning("Query cannot be empty.")
-    else:
-        # Initialize RetrievalManager
-        from src.retrieval import RetrievalManager, RetrievalConfig
-        
-        # Load hyperparams
-        threshold_val = st.session_state.get("qa_threshold", 0.70)
-        top_k_val = st.session_state.get("qa_top_k", 5)
-        dup_removal = st.session_state.get("qa_dup_removal", True)
-        
-        config = RetrievalConfig(
-            top_k=int(top_k_val),
-            similarity_threshold=float(threshold_val),
-            duplicate_removal=dup_removal
-        )
-        
-        # Trigger search
-        ret_manager = RetrievalManager()
-        result = ret_manager.search(query_input, config=config)
-        
-        # Check success
-        if not result.success:
-            st.error(f"❌ {result.message}")
-            if result.reason == "NO_RELEVANT_CONTEXT":
-                st.info("💡 Suggestion: Please upload documents related to this topic.")
-        else:
-            st.success("✅ Semantic retrieval completed successfully!")
-            
-            # Display stats badge
-            st.markdown(f"**Query detected language:** `{result.language}` (confidence: {result.language_confidence:.2f})")
-            
-            # Display matching chunks
-            st.markdown("#### 🎯 Retrieved Source Chunks")
-            for idx, c in enumerate(result.retrieved_chunks, 1):
-                conf_color = "green" if c.confidence == "High" else ("orange" if c.confidence == "Medium" else "red")
-                st.markdown(
-                    f"""
-                    <div style="border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 12px; background-color: #fcfcfc;">
-                        <span style="font-weight: bold; color: #333;">[Chunk {idx}]</span> &nbsp;
-                        <span class="badge" style="background-color: #f0f0f0; color: #333; padding: 2px 6px; border-radius: 4px;">Source: {c.source_file}</span> &nbsp;
-                        <span class="badge" style="background-color: #f0f0f0; color: #333; padding: 2px 6px; border-radius: 4px;">Reference: {c.source_reference}</span> &nbsp;
-                        <span class="badge" style="background-color: #f0f0f0; color: #333; padding: 2px 6px; border-radius: 4px;">Similarity: {c.similarity_score:.4f}</span> &nbsp;
-                        <span class="badge" style="background-color: {conf_color}; color: white; padding: 2px 6px; border-radius: 4px;">Confidence: {c.confidence}</span>
-                        <div style="margin-top: 8px; font-family: monospace; white-space: pre-wrap; font-size: 13px; color: #555;">{c.chunk_text}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-                
-            # Developer Dashboard Stats
+# Display previous conversation history
+for msg in st.session_state.chat_history:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+        # Render references list if available
+        if msg["role"] == "assistant" and msg.get("success", False) and msg.get("retrieved_chunks"):
+            with st.expander("🎯 Retrieved Reference Chunks"):
+                for idx, c in enumerate(msg["retrieved_chunks"], 1):
+                    st.markdown(f"**[{idx}] {c['file']} ({c['ref']})** - Similarity: `{c['score']:.4f}`")
+                    st.caption(c["text"])
             if st.session_state.get("dev_mode", False):
-                with st.expander("🔧 Developer Mode: Retrieval Metrics", expanded=True):
-                    # Show breakdown of timings
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Embedding Generation", f"{result.latency_metrics.get('query_embedding_time_ms', 0.0):.2f} ms")
-                    col2.metric("FAISS Search", f"{result.latency_metrics.get('faiss_search_time_ms', 0.0):.2f} ms")
-                    col3.metric("Metadata Lookup", f"{result.latency_metrics.get('metadata_lookup_time_ms', 0.0):.2f} ms")
-                    col4.metric("Total Latency", f"{result.latency_metrics.get('total_latency_ms', 0.0):.2f} ms")
+                with st.expander("🔧 Developer Mode: LLM & Prompt Metrics"):
+                    st.markdown(f"• **Inference Latency:** `{msg.get('latency_metrics', {}).get('inference_time_ms', 0.0):.2f} ms`")
+                    st.markdown(f"• **Prompt Size:** `{msg.get('prompt_size_chars', 0)} chars`")
+                    st.markdown(f"• **Prompt Tokens (Input):** `{msg.get('token_statistics', {}).get('prompt_eval_count', 'N/A')}`")
+                    st.markdown(f"• **Response Tokens (Output):** `{msg.get('token_statistics', {}).get('eval_count', 'N/A')}`")
+
+# Chat input from user
+if prompt := st.chat_input("Ask a question about your documents..."):
+    # Display user query
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    st.session_state.chat_history.append({"role": "user", "content": prompt})
+    
+    # 1. Search semantic matches
+    from src.retrieval import RetrievalManager, RetrievalConfig
+    threshold_val = st.session_state.get("qa_threshold", 0.70)
+    top_k_val = st.session_state.get("qa_top_k", 5)
+    dup_removal = st.session_state.get("qa_dup_removal", True)
+    
+    config = RetrievalConfig(
+        top_k=int(top_k_val),
+        similarity_threshold=float(threshold_val),
+        duplicate_removal=dup_removal
+    )
+    ret_manager = RetrievalManager()
+    ret_res = ret_manager.search(prompt, config=config)
+    
+    # 2. Invoke local LLM generation
+    from src.llm import LLMManager
+    from src.config.settings import LLM_MODEL_NAME
+    llm_manager = LLMManager()
+    
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            ans_res = llm_manager.generate_grounded_answer(ret_res)
+            st.markdown(ans_res.answer)
+            
+            # Show citation chunks
+            if ans_res.success and ret_res.retrieved_chunks:
+                with st.expander("🎯 Retrieved Reference Chunks"):
+                    for idx, c in enumerate(ret_res.retrieved_chunks, 1):
+                        st.markdown(f"**[{idx}] {c.source_file} ({c.source_reference})** - Similarity: `{c.similarity_score:.4f}`")
+                        st.caption(c.chunk_text)
+            
+            # Developer Dashboard
+            if st.session_state.get("dev_mode", False):
+                with st.expander("🔧 Developer Mode: LLM & Prompt Metrics", expanded=True):
+                    st.markdown(f"• **Model Tag:** `{LLM_MODEL_NAME}`")
+                    st.markdown(f"• **Inference Latency:** `{ans_res.latency_metrics.get('inference_time_ms', 0.0):.2f} ms`")
+                    st.markdown(f"• **Prompt Size:** `{len(prompt)} chars`")
                     
-                    st.markdown("#### 📊 Config & Search Statistics")
-                    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-                    col_s1.metric("Top-K Requested", result.statistics.get("top_k_requested", top_k_val))
-                    col_s2.metric("Top-K Returned", result.statistics.get("top_k_returned", 0))
-                    col_s3.metric("Threshold Slider", result.statistics.get("threshold", threshold_val))
-                    col_s4.metric("Duplicates Removed", result.statistics.get("duplicates_removed", 0))
+                    token_stats = ans_res.token_statistics
+                    prompt_toks = token_stats.get("prompt_eval_count", "N/A")
+                    resp_toks = token_stats.get("eval_count", "N/A")
+                    st.markdown(f"• **Prompt Tokens (Input):** `{prompt_toks}`")
+                    st.markdown(f"• **Response Tokens (Output):** `{resp_toks}`")
                     
-                    # Highlight min/max scores
-                    scores = [c.similarity_score for c in result.retrieved_chunks]
-                    col_sc1, col_sc2 = st.columns(2)
-                    col_sc1.metric("Highest Similarity Score", f"{max(scores):.4f}" if scores else "N/A")
-                    col_sc2.metric("Lowest Similarity Score", f"{min(scores):.4f}" if scores else "N/A")
+                    # Latency timings
+                    st.markdown("**Latency Breakdown JSON:**")
+                    st.json(ans_res.latency_metrics)
+                    
+    # Save to history list
+    st.session_state.chat_history.append({
+        "role": "assistant",
+        "content": ans_res.answer,
+        "success": ans_res.success,
+        "retrieved_chunks": [
+            {
+                "file": c.source_file,
+                "ref": c.source_reference,
+                "score": c.similarity_score,
+                "text": c.chunk_text
+            } for c in ret_res.retrieved_chunks
+        ] if ret_res.success else [],
+        "latency_metrics": ans_res.latency_metrics,
+        "token_statistics": ans_res.token_statistics,
+        "prompt_size_chars": len(prompt)
+    })
