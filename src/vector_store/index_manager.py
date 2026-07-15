@@ -186,6 +186,18 @@ class IndexManager:
         # Map IDs to metadata
         return SearchUtils.map_results(similarities, indices, self.metadata_store)
 
+    def raw_search(self, query_vector: np.ndarray, top_k: int = 5) -> tuple:
+        """Executes raw FAISS search without database mapping.
+        
+        Communicates only with internal FAISS engine to retrieve raw scores and row indices.
+        """
+        IndexValidator.validate_search(query_vector, self.engine.total, self.dimension)
+        return self.engine.search(query_vector, top_k)
+
+    def map_search_results(self, similarities: np.ndarray, indices: np.ndarray) -> List[Dict[str, Any]]:
+        """Maps raw row indices back to structured metadata records in SQLite."""
+        return SearchUtils.map_results(similarities, indices, self.metadata_store)
+
     def get_index_info(self) -> Dict[str, Any]:
         """Loads configuration properties from JSON info settings."""
         return IndexPersistence.load_info(self.index_dir)

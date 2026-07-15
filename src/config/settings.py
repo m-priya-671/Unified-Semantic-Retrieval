@@ -51,3 +51,8 @@ UPLOAD_LIMITS = {
 
 # Logging settings
 LOG_FILE_PATH = LOGS_DIR / "app.log"
+
+# Retrieval Configs
+MAX_QUERY_LENGTH = 500
+DEFAULT_TOP_K = 5
+DEFAULT_SIMILARITY_THRESHOLD = 0.70

@@ -182,6 +182,28 @@ with st.sidebar:
             step=8,
             key="ui_batch_size"
         )
+        st.markdown("#### 🔍 Retrieval Config")
+        st.slider(
+            "Retrieval Top-K",
+            min_value=1,
+            max_value=10,
+            value=st.session_state.get("qa_top_k", 5),
+            step=1,
+            key="qa_top_k"
+        )
+        st.slider(
+            "Similarity Threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=st.session_state.get("qa_threshold", 0.70),
+            step=0.05,
+            key="qa_threshold"
+        )
+        st.checkbox(
+            "Remove Duplicates",
+            value=st.session_state.get("qa_dup_removal", True),
+            key="qa_dup_removal"
+        )
         
         st.markdown("#### 🗂️ Vector Index Info")
         st.markdown(f"• **Index Type:** `{index_info.get('index_type', 'N/A')}`")
@@ -693,3 +715,86 @@ else:
                 if selected_chunk_id:
                     selected_chunk = next(c for c in chunks if c.chunk_id == selected_chunk_id)
                     st.json(selected_chunk.metadata)
+
+# 8. Q&A Semantic Search Playground
+st.markdown("---")
+st.markdown("### 🔍 Semantic Search Playground (Pre-LLM context verification)")
+st.info("Input a query in English, Tamil, or Mixed languages to retrieve matching source chunks.")
+
+# Query text input
+query_input = st.text_input("Enter your natural language question:", key="qa_query_input")
+search_clicked = st.button("🔍 Execute Semantic Retrieval", key="qa_search_button")
+
+if search_clicked or query_input:
+    if not query_input.strip():
+        st.warning("Query cannot be empty.")
+    else:
+        # Initialize RetrievalManager
+        from src.retrieval import RetrievalManager, RetrievalConfig
+        
+        # Load hyperparams
+        threshold_val = st.session_state.get("qa_threshold", 0.70)
+        top_k_val = st.session_state.get("qa_top_k", 5)
+        dup_removal = st.session_state.get("qa_dup_removal", True)
+        
+        config = RetrievalConfig(
+            top_k=int(top_k_val),
+            similarity_threshold=float(threshold_val),
+            duplicate_removal=dup_removal
+        )
+        
+        # Trigger search
+        ret_manager = RetrievalManager()
+        result = ret_manager.search(query_input, config=config)
+        
+        # Check success
+        if not result.success:
+            st.error(f"❌ {result.message}")
+            if result.reason == "NO_RELEVANT_CONTEXT":
+                st.info("💡 Suggestion: Please upload documents related to this topic.")
+        else:
+            st.success("✅ Semantic retrieval completed successfully!")
+            
+            # Display stats badge
+            st.markdown(f"**Query detected language:** `{result.language}` (confidence: {result.language_confidence:.2f})")
+            
+            # Display matching chunks
+            st.markdown("#### 🎯 Retrieved Source Chunks")
+            for idx, c in enumerate(result.retrieved_chunks, 1):
+                conf_color = "green" if c.confidence == "High" else ("orange" if c.confidence == "Medium" else "red")
+                st.markdown(
+                    f"""
+                    <div style="border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 12px; background-color: #fcfcfc;">
+                        <span style="font-weight: bold; color: #333;">[Chunk {idx}]</span> &nbsp;
+                        <span class="badge" style="background-color: #f0f0f0; color: #333; padding: 2px 6px; border-radius: 4px;">Source: {c.source_file}</span> &nbsp;
+                        <span class="badge" style="background-color: #f0f0f0; color: #333; padding: 2px 6px; border-radius: 4px;">Reference: {c.source_reference}</span> &nbsp;
+                        <span class="badge" style="background-color: #f0f0f0; color: #333; padding: 2px 6px; border-radius: 4px;">Similarity: {c.similarity_score:.4f}</span> &nbsp;
+                        <span class="badge" style="background-color: {conf_color}; color: white; padding: 2px 6px; border-radius: 4px;">Confidence: {c.confidence}</span>
+                        <div style="margin-top: 8px; font-family: monospace; white-space: pre-wrap; font-size: 13px; color: #555;">{c.chunk_text}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
+            # Developer Dashboard Stats
+            if st.session_state.get("dev_mode", False):
+                with st.expander("🔧 Developer Mode: Retrieval Metrics", expanded=True):
+                    # Show breakdown of timings
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Embedding Generation", f"{result.latency_metrics.get('query_embedding_time_ms', 0.0):.2f} ms")
+                    col2.metric("FAISS Search", f"{result.latency_metrics.get('faiss_search_time_ms', 0.0):.2f} ms")
+                    col3.metric("Metadata Lookup", f"{result.latency_metrics.get('metadata_lookup_time_ms', 0.0):.2f} ms")
+                    col4.metric("Total Latency", f"{result.latency_metrics.get('total_latency_ms', 0.0):.2f} ms")
+                    
+                    st.markdown("#### 📊 Config & Search Statistics")
+                    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+                    col_s1.metric("Top-K Requested", result.statistics.get("top_k_requested", top_k_val))
+                    col_s2.metric("Top-K Returned", result.statistics.get("top_k_returned", 0))
+                    col_s3.metric("Threshold Slider", result.statistics.get("threshold", threshold_val))
+                    col_s4.metric("Duplicates Removed", result.statistics.get("duplicates_removed", 0))
+                    
+                    # Highlight min/max scores
+                    scores = [c.similarity_score for c in result.retrieved_chunks]
+                    col_sc1, col_sc2 = st.columns(2)
+                    col_sc1.metric("Highest Similarity Score", f"{max(scores):.4f}" if scores else "N/A")
+                    col_sc2.metric("Lowest Similarity Score", f"{min(scores):.4f}" if scores else "N/A")

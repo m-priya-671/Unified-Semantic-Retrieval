@@ -2,7 +2,6 @@ import os
 import time
 import numpy as np
 from typing import List
-from sentence_transformers import SentenceTransformer
 from src.config.settings import MODELS_DIR, EMBEDDING_MODEL_NAME
 from src.utils.logger import logger
 
@@ -25,6 +24,7 @@ class EmbeddingEngine:
         start_time = time.time()
         
         # Load SentenceTransformer locally using target cache directory
+        from sentence_transformers import SentenceTransformer
         self.model = SentenceTransformer(
             model_name_or_path=name,
             cache_folder=str(self.embeddings_dir),
