@@ -24,5 +24,11 @@ class RetrievalResult:
     retrieved_chunks: List[RetrievalChunk] = field(default_factory=list)
     combined_context: str = ""
     total_chunks: int = 0
+    intent: str = "QUESTION"
+    retrieval_mode: str = "Automatic"
+    is_low_confidence: bool = False
+    highest_similarity: float = 0.0
+    lowest_similarity: float = 0.0
+    average_similarity: float = 0.0
     statistics: Dict[str, Any] = field(default_factory=dict)  # top_k_requested, top_k_returned, threshold, duplicates_removed
     latency_metrics: Dict[str, Any] = field(default_factory=dict)  # query_embedding_time_ms, faiss_search_time_ms, metadata_lookup_time_ms, context_assembly_time_ms, total_latency_ms

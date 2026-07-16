@@ -49,7 +49,35 @@ class RetrievalManager:
         # 2. Language Detection
         lang, lang_conf = LanguageDetector.detect(processed_query)
         
-        # 3. Sanity Checks and Validations
+        # 3. Intent Detection & Adaptive Threshold Mapping
+        from src.retrieval.intent_classifier import IntentClassifier
+        
+        mode = config.retrieval_mode
+        if mode == "Automatic":
+            intent = IntentClassifier.classify(processed_query)
+        else:
+            if mode == "Semantic Search":
+                intent = "QUESTION"
+            elif mode == "Document Summary":
+                intent = "SUMMARY"
+            elif mode == "Overview":
+                intent = "OVERVIEW"
+            elif mode == "Translation":
+                intent = "TRANSLATION"
+            else:
+                intent = "QUESTION"
+                
+        # Adaptive Threshold defaults
+        threshold_map = {
+            "QUESTION": 0.70,
+            "SUMMARY": 0.55,
+            "OVERVIEW": 0.55,
+            "GENERAL": 0.60,
+            "TRANSLATION": 0.60
+        }
+        active_threshold = threshold_map.get(intent, 0.70)
+        
+        # 4. Sanity Checks and Validations
         try:
             QueryValidator.validate(processed_query, config.max_query_length, self.index_manager)
         except ValueError as val_err:
@@ -75,10 +103,12 @@ class RetrievalManager:
                 query=raw_query,
                 language=lang,
                 language_confidence=lang_conf,
+                intent=intent,
+                retrieval_mode=mode,
                 latency_metrics=latency_metrics
             )
 
-        # 4. Search Retrieval Engine
+        # 5. Search Retrieval Engine
         try:
             query_vector, raw_candidates, latencies = self.engine.retrieve(processed_query, config.top_k)
         except Exception as e:
@@ -91,24 +121,53 @@ class RetrievalManager:
                 query=processed_query,
                 language=lang,
                 language_confidence=lang_conf,
+                intent=intent,
+                retrieval_mode=mode,
                 latency_metrics={"total_latency_ms": (time.time() - start_total) * 1000.0}
             )
 
-        # 5. Ranking (Filtering & Deduplicating)
-        retrieved_chunks, duplicates_removed = RankingProcessor.process(
+        # 6. Summary/Overview: Surrounding Neighbor Chunk Retrieval
+        if (intent in ["SUMMARY", "OVERVIEW"]) and raw_candidates:
+            start_neighbors = time.time()
+            top_cand = raw_candidates[0]
+            top_faiss_id = top_cand.get("faiss_id")
+            doc_id = top_cand.get("document_id")
+            top_score = top_cand.get("similarity_score", 1.0)
+            
+            # Fetch surrounding chunks (limit=3 before and 3 after, total sequence context)
+            neighbors = self.index_manager.metadata_store.get_neighboring_chunks(doc_id, top_faiss_id, limit=3)
+            
+            if neighbors:
+                # Re-map results listcontiguously
+                raw_candidates = []
+                for n in neighbors:
+                    raw_candidates.append({
+                        "faiss_id": n["faiss_id"],
+                        "chunk_id": n["chunk_id"],
+                        "document_id": n["document_id"],
+                        "source_file": n["source_file"],
+                        "source_reference": n["source_reference"],
+                        "chunk_text": n["chunk_text"],
+                        "similarity_score": top_score  # Set to top score so it survives ranking filter checks
+                    })
+                logger.info(f"Retrieved {len(raw_candidates)} surrounding chunks for summarization context.")
+            latencies["metadata_lookup_time_ms"] += (time.time() - start_neighbors) * 1000.0
+
+        # 7. Ranking (Filtering & Deduplicating with Low-Confidence fallback check)
+        retrieved_chunks, duplicates_removed, is_low_confidence = RankingProcessor.process(
             results=raw_candidates,
-            threshold=config.similarity_threshold,
+            threshold=active_threshold,
             duplicate_removal=config.duplicate_removal
         )
         
         stats = {
             "top_k_requested": config.top_k,
             "top_k_returned": len(retrieved_chunks),
-            "threshold": config.similarity_threshold,
+            "threshold": active_threshold,
             "duplicates_removed": duplicates_removed
         }
 
-        # 6. No-Result Fallback Handling
+        # 8. No-Result Fallback Handling
         if not retrieved_chunks:
             latencies["total_latency_ms"] = (time.time() - start_total) * 1000.0
             return RetrievalResult(
@@ -118,6 +177,8 @@ class RetrievalManager:
                 query=processed_query,
                 language=lang,
                 language_confidence=lang_conf,
+                intent=intent,
+                retrieval_mode=mode,
                 retrieved_chunks=[],
                 combined_context="",
                 total_chunks=0,
@@ -125,11 +186,17 @@ class RetrievalManager:
                 latency_metrics=latencies
             )
 
-        # 7. Context Builder Assembly
+        # 9. Context Builder Assembly
         start_context = time.time()
         combined_context = ContextBuilder.build(retrieved_chunks)
         latencies["context_assembly_time_ms"] = (time.time() - start_context) * 1000.0
         latencies["total_latency_ms"] = (time.time() - start_total) * 1000.0
+
+        # 10. Compute similarity statistics
+        scores = [c.similarity_score for c in retrieved_chunks]
+        highest_sim = max(scores) if scores else 0.0
+        lowest_sim = min(scores) if scores else 0.0
+        avg_sim = sum(scores) / len(scores) if scores else 0.0
 
         logger.info(f"Retrieval operation completed successfully. Hits: {len(retrieved_chunks)} / {config.top_k}")
         
@@ -143,6 +210,12 @@ class RetrievalManager:
             retrieved_chunks=retrieved_chunks,
             combined_context=combined_context,
             total_chunks=len(retrieved_chunks),
+            intent=intent,
+            retrieval_mode=mode,
+            is_low_confidence=is_low_confidence,
+            highest_similarity=highest_sim,
+            lowest_similarity=lowest_sim,
+            average_similarity=avg_sim,
             statistics=stats,
             latency_metrics=latencies
         )

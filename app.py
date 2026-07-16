@@ -347,469 +347,402 @@ with st.sidebar:
     st.markdown("• **Query Latency:** *N/A (Coming in M7)*")
     
     st.markdown("---")
-    if st.button("Clear Parsing Memory", type="primary", use_container_width=True):
-        st.session_state.parsed_files = {}
-        st.success("Parsing cache cleared.")
-        st.rerun()
+    if st.button("Clear Parsing Memory", type="primary", use_container_width=True):# 5. Header Title Banner
+st.markdown("<div class='banner-title'>Offline Multimodal RAG System</div>", unsafe_allow_html=True)
+st.markdown("<div class='banner-subtitle'>English • Tamil • AI-Powered Local Knowledge Assistant</div>", unsafe_allow_html=True)
 
-# 5. Header Title Banner
-st.markdown("<div class='banner-title'>Unified Semantic Retrieval</div>", unsafe_allow_html=True)
-st.markdown("<div class='banner-subtitle'>Milestone 2: Offline Document Parser & OCR Engine</div>", unsafe_allow_html=True)
+# 6. Global Latencies Cache
+if "retrieval_latencies" not in st.session_state:
+    st.session_state.retrieval_latencies = []
+if "llm_latencies" not in st.session_state:
+    st.session_state.llm_latencies = []
 
-# 6. Upload Component
-st.markdown("### 📥 Document Ingestion")
-uploaded_files = st.file_uploader(
-    "Choose PDF, DOCX, Image, or Audio files to extract text locally",
-    type=["pdf", "docx", "png", "jpg", "jpeg", "bmp", "tiff", "mp3", "wav", "m4a", "flac"],
-    accept_multiple_files=True,
-    help="Files are validated locally and stored offline in data/uploads/"
-)
+# 7. Metrics Dashboard Cards
+st.markdown("### 📊 Metrics Dashboard")
+stats = idx_manager.metadata_store.get_index_stats()
+total_docs = stats.get("total_documents", 0)
+total_chunks = stats.get("total_vectors", 0)
+total_vectors = idx_manager.engine.total
 
-# Process uploads
-if uploaded_files:
-    for uploaded_file in uploaded_files:
-        file_name = uploaded_file.name
-        
-        # Avoid processing duplicate files in the same run
-        if file_name in st.session_state.parsed_files:
-            continue
+avg_ret_time = sum(st.session_state.retrieval_latencies) / len(st.session_state.retrieval_latencies) if st.session_state.retrieval_latencies else 0.0
+avg_llm_time = sum(st.session_state.llm_latencies) / len(st.session_state.llm_latencies) if st.session_state.llm_latencies else 0.0
+
+d_col1, d_col2, d_col3, d_col4, d_col5, d_col6 = st.columns(6)
+d_col1.metric("Documents", total_docs)
+d_col2.metric("Chunks", total_chunks)
+d_col3.metric("Vectors", total_vectors)
+d_col4.metric("Embeddings Model", "MiniLM-L12")
+d_col5.metric("Avg Retrieval", f"{avg_ret_time:.1f} ms")
+d_col6.metric("Avg LLM Time", f"{avg_llm_time:.1f} ms")
+
+st.markdown("---")
+
+# Main application tab layout
+tab_chat, tab_ingest = st.tabs(["💬 Grounded Chat Q&A", "📤 Ingestion & Library"])
+
+with tab_ingest:
+    st.markdown("### 📥 Document Ingestion")
+    uploaded_files = st.file_uploader(
+        "Choose PDF, DOCX, Image, or Audio files to extract text locally",
+        type=["pdf", "docx", "png", "jpg", "jpeg", "bmp", "tiff", "mp3", "wav", "m4a", "flac"],
+        accept_multiple_files=True,
+        help="Files are validated locally and stored offline in data/uploads/",
+        key="file_uploader_ingest"
+    )
+
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            file_name = uploaded_file.name
+            if file_name in st.session_state.parsed_files:
+                continue
+                
+            file_bytes = uploaded_file.read()
+            progress_bar = st.progress(0, text=f"Validating {file_name}...")
             
-        # File manager validation and saving
-        file_bytes = uploaded_file.read()
-        
-        # Setup streamlit progress
-        progress_bar = st.progress(0, text=f"Validating {file_name}...")
-        
-        saved_path, message = FileManager.save_upload(file_name, file_bytes)
-        
-        if not saved_path:
-            progress_bar.empty()
-            if isinstance(message, dict):
+            saved_path, message = FileManager.save_upload(file_name, file_bytes)
+            if not saved_path:
+                progress_bar.empty()
                 st.error("❌ Validation Failed")
                 st.markdown(f"""
-                <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 18px; margin-bottom: 20px;">
-                    <h4 style="color: #f87171; margin-top: 0px; margin-bottom: 12px; font-family: 'Outfit', sans-serif;">⚠️ File Validation Error Report</h4>
-                    <table style="width: 100%; border-collapse: collapse; font-family: sans-serif;">
-                        <tr><td style="padding: 5px 0; color: #f87171; font-weight: 600; width: 140px; font-size: 0.9rem;">File Name</td><td style="padding: 5px 0; color: #f8fafc; font-size: 0.9rem;">{message['file_name']}</td></tr>
-                        <tr><td style="padding: 5px 0; color: #f87171; font-weight: 600; font-size: 0.9rem;">Uploaded Size</td><td style="padding: 5px 0; color: #f8fafc; font-size: 0.9rem;">{message['size_mb']:.2f} MB</td></tr>
-                        <tr><td style="padding: 5px 0; color: #f87171; font-weight: 600; font-size: 0.9rem;">Allowed Size</td><td style="padding: 5px 0; color: #f8fafc; font-size: 0.9rem;">{message['limit_mb']:.1f} MB</td></tr>
-                        <tr><td style="padding: 5px 0; color: #f87171; font-weight: 600; font-size: 0.9rem;">Status</td><td style="padding: 5px 0; color: #f87171; font-weight: bold; font-size: 0.9rem;">Validation Failed</td></tr>
-                        <tr><td style="padding: 5px 0; color: #f87171; font-weight: 600; font-size: 0.9rem;">Reason</td><td style="padding: 5px 0; color: #e2e8f0; font-size: 0.9rem;">{message['reason']}</td></tr>
-                        <tr><td style="padding: 5px 0; color: #f87171; font-weight: 600; font-size: 0.9rem;">Suggestion</td><td style="padding: 5px 0; color: #38bdf8; font-style: italic; font-size: 0.9rem;">{message['suggestion']}</td></tr>
-                    </table>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.error(f"Failed to process **{file_name}**: {message}")
-            continue
+                **File Name:** {file_name}
+                **Uploaded Size:** {message.get('size_mb', 0.0) if isinstance(message, dict) else 0.0:.2f} MB
+                **Reason:** {message.get('reason', message) if isinstance(message, dict) else message}
+                """)
+                continue
+                
+            progress_bar.progress(30, text=f"Saving {file_name} to disk...")
+            ext = file_name.split(".")[-1].lower()
+            progress_bar.progress(50, text=f"Initializing local parser for {file_name}...")
             
-        progress_bar.progress(30, text=f"Saving {file_name} to disk...")
+            try:
+                start_parse_time = time.time()
+                parser = ParserFactory.get_parser(ext)
+                progress_bar.progress(70, text=f"Extracting text from {file_name}...")
+                parsed_docs = parser.parse(str(saved_path))
+                parse_duration = time.time() - start_parse_time
+                
+                from src.text_processing import DocumentConverter, ChunkingEngine
+                from src.embedding import EmbeddingManager
+                
+                category = "image" if ext in ["png", "jpg", "jpeg", "bmp", "tiff"] else ("audio" if ext in ["mp3", "wav", "m4a", "flac"] else ext)
+                unified_doc = DocumentConverter.convert(
+                    documents=parsed_docs,
+                    source_file=file_name,
+                    source_type=category,
+                    processing_time=parse_duration
+                )
+                
+                chunk_size = st.session_state.get("ui_chunk_size", 500)
+                chunk_overlap = st.session_state.get("ui_chunk_overlap", 100)
+                chunks = ChunkingEngine.chunk_document(unified_doc, chunk_size, chunk_overlap)
+                
+                progress_bar.progress(80, text=f"Generating local L2 embeddings...")
+                emb_manager = EmbeddingManager()
+                batch_size = st.session_state.get("ui_batch_size", 32)
+                vectors, updated_chunks = emb_manager.embed_chunks(chunks, batch_size=batch_size)
+                
+                progress_bar.progress(95, text=f"Indexing in FAISS index...")
+                idx_manager.add_vectors_and_metadata(vectors, updated_chunks)
+                
+                st.session_state.parsed_files[file_name] = {
+                    "file_name": file_name,
+                    "file_type": ext,
+                    "file_size": len(file_bytes),
+                    "file_path": str(saved_path),
+                    "documents": parsed_docs,
+                    "unified_document": unified_doc,
+                    "chunks": updated_chunks,
+                    "vectors": vectors,
+                    "processing_time": parse_duration
+                }
+                st.success(f"Parsed and Indexed **{file_name}** successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error parsing **{file_name}**: {str(e)}")
+            finally:
+                progress_bar.empty()
+
+    st.markdown("---")
+    st.markdown("### 🗂️ Document Library")
+    docs = idx_manager.metadata_store.get_all_documents()
+    if not docs:
+        st.info("No documents uploaded yet.")
+    else:
+        # Table of indexed files
+        table_list = []
+        for d in docs:
+            doc_hash = d["document_hash"]
+            file_name = d["file_name"] or "Unknown"
+            ext = file_name.split(".")[-1] if "." in file_name else "Unknown"
+            chunks = d["indexed_chunks"]
+            status = d["index_status"]
+            table_list.append({
+                "Filename": file_name,
+                "Type": ext.upper(),
+                "Indexed Chunks": chunks,
+                "Last Indexed": d["last_indexed"],
+                "Indexed Status": status
+            })
+        st.dataframe(table_list, use_container_width=True)
         
-        # Get extension
-        ext = file_name.split(".")[-1].lower()
-        
-        progress_bar.progress(50, text=f"Initializing local parser for {file_name}...")
-        
-        try:
-            start_parse_time = time.time()
-            parser = ParserFactory.get_parser(ext)
-            progress_bar.progress(70, text=f"Extracting text from {file_name}...")
+        # Actions
+        st.markdown("#### Manage Documents")
+        for d in docs:
+            doc_hash = d["document_hash"]
+            file_name = d["file_name"] or "Unknown"
+            col_lbl, col_del, col_re = st.columns([4, 1, 1])
+            col_lbl.write(f"📄 **{file_name}**")
             
-            parsed_docs = parser.parse(str(saved_path))
-            parse_duration = time.time() - start_parse_time
-            
-            # Store in session state
-            # Convert and Chunk
-            from src.text_processing import DocumentConverter, ChunkingEngine
-            from src.embedding import EmbeddingManager
-            from src.vector_store import IndexManager
-            
-            category = "image" if ext in ["png", "jpg", "jpeg", "bmp", "tiff"] else ("audio" if ext in ["mp3", "wav", "m4a", "flac"] else ext)
-            unified_doc = DocumentConverter.convert(
-                documents=parsed_docs,
-                source_file=file_name,
-                source_type=category,
-                processing_time=parse_duration
-            )
-            
-            chunk_size = st.session_state.get("ui_chunk_size", 500)
-            chunk_overlap = st.session_state.get("ui_chunk_overlap", 100)
-            
-            chunks = ChunkingEngine.chunk_document(
-                doc=unified_doc,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap
-            )
-            
-            # Embed
-            progress_bar.progress(80, text=f"Generating local L2-normalized embeddings for {len(chunks)} chunks...")
-            emb_manager = EmbeddingManager()
-            batch_size = st.session_state.get("ui_batch_size", 32)
-            vectors, updated_chunks = emb_manager.embed_chunks(chunks, batch_size=batch_size)
+            if col_del.button("🗑️ Delete", key=f"del_{doc_hash}", use_container_width=True):
+                idx_manager.delete_document(doc_hash)
+                # Remove from cache if loaded
+                if file_name in st.session_state.parsed_files:
+                    del st.session_state.parsed_files[file_name]
+                st.success(f"Deleted {file_name} successfully!")
+                time.sleep(0.5)
+                st.rerun()
+                
+            if col_re.button("🔄 Re-index", key=f"re_{doc_hash}", use_container_width=True):
+                with st.spinner("Re-indexing..."):
+                    file_path = UPLOAD_DIR / file_name
+                    if file_path.exists():
+                        with open(file_path, "rb") as f:
+                            file_bytes = f.read()
+                        idx_manager.delete_document(doc_hash)
+                        if file_name in st.session_state.parsed_files:
+                            del st.session_state.parsed_files[file_name]
+                            
+                        # Re-run pipeline
+                        parser = ParserFactory.get_parser(file_name.split(".")[-1].lower())
+                        parsed_docs = parser.parse(str(file_path))
+                        from src.text_processing import DocumentConverter, ChunkingEngine
+                        from src.embedding import EmbeddingManager
+                        category = "pdf" if file_name.endswith(".pdf") else "docx"
+                        ud = DocumentConverter.convert(parsed_docs, file_name, category, 0.0)
+                        chunks = ChunkingEngine.chunk_document(ud, st.session_state.get("ui_chunk_size", 500), st.session_state.get("ui_chunk_overlap", 100))
+                        emb_manager = EmbeddingManager()
+                        vectors, updated_chunks = emb_manager.embed_chunks(chunks)
+                        idx_manager.add_vectors_and_metadata(vectors, updated_chunks)
+                        
+                        st.session_state.parsed_files[file_name] = {
+                            "file_name": file_name,
+                            "file_type": file_name.split(".")[-1],
+                            "file_size": file_path.stat().st_size,
+                            "file_path": str(file_path),
+                            "documents": parsed_docs,
+                            "unified_document": ud,
+                            "chunks": updated_chunks,
+                            "vectors": vectors,
+                            "processing_time": 0.0
+                        }
+                        st.success(f"Re-indexed {file_name}!")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error("Upload source file missing on disk.")
 
-            # Index
-            progress_bar.progress(95, text=f"Indexing chunks inside local FAISS database...")
-            idx_manager = IndexManager()
-            idx_manager.add_vectors_and_metadata(vectors, updated_chunks)
-
-            st.session_state.parsed_files[file_name] = {
-                "file_name": file_name,
-                "file_type": ext,
-                "file_size": len(file_bytes),
-                "file_path": str(saved_path),
-                "documents": parsed_docs,
-                "unified_document": unified_doc,
-                "chunks": updated_chunks,
-                "vectors": vectors,
-                "processing_time": parse_duration
-            }
-            
-            progress_bar.progress(100, text=f"Successfully extracted {file_name}!")
-            st.success(f"Parsed **{file_name}** ({len(file_bytes)/1024:.1f} KB) - Extracted {len(parsed_docs)} structures.")
-            
-        except Exception as e:
-            st.error(f"Error parsing **{file_name}**: {str(e)}")
-            logger.error(f"Parsing execution failed for file {file_name}: {str(e)}")
-            
-        # Remove progress bar cleanly after delay
-        progress_bar.empty()
-
-# 7. Parsed Content Visualization
-st.markdown("### 📋 Ingested Documents List")
-
-if total_files == 0:
-    st.info("No documents uploaded yet. Upload PDF, DOCX, or Image files above to parse text.")
-else:
+    st.markdown("---")
+    st.markdown("### 📋 Uploaded Files Metadata Cards")
     for name, file_data in st.session_state.parsed_files.items():
-        # Extracted card structure
         ext = file_data["file_type"]
-        if ext == "pdf":
-            badge_cls = "badge-pdf"
-        elif ext == "docx":
-            badge_cls = "badge-docx"
-        elif ext in ["mp3", "wav", "m4a", "flac"]:
-            badge_cls = "badge-audio"
-        else:
-            badge_cls = "badge-image"
+        pages_count = len(file_data["documents"])
+        
+        with st.expander(f"📄 {name} Information Card"):
+            info_data = {
+                "Metric": ["Filename", "Type", "Pages/Blocks", "Chunks Size", "Embedding Status", "Indexed Status", "Processing Time"],
+                "Value": [
+                    file_data["file_name"],
+                    ext.upper(),
+                    f"{pages_count} blocks/pages",
+                    str(len(file_data.get("chunks", []))),
+                    "L2-Normalized (384-dim) 🟢",
+                    "Indexed in FAISS 🟢",
+                    f"{file_data.get('processing_time', 0.0):.2f}s"
+                ]
+            }
+            st.table(info_data)
             
-        # Collect dynamic card details
-        file_size_mb = file_data["file_size"] / (1024 * 1024)
-        docs_list = file_data["documents"]
-        first_doc_meta = docs_list[0].metadata if docs_list else {}
-        
-        parser_used = "Unknown"
-        ocr_engine = "N/A"
-        pages_count = "N/A"
-        blocks_count = "N/A"
-        resolution = "N/A"
-        audio_duration = "N/A"
-        audio_channels = "N/A"
-        audio_sr = "N/A"
-        languages_list = []
-        upload_time = first_doc_meta.get("extracted_at", "Just now")
-        
-        if ext == "pdf":
-            parser_used = "PDFParser"
-            pages_count = f"{first_doc_meta.get('total_pages', len(docs_list))}"
-            pipeline_steps = ["Upload", "Validation", "Text Extraction", "Metadata Generated", "Ready for Chunking"]
-        elif ext == "docx":
-            parser_used = "DocxParser"
-            blocks_count = f"{len(docs_list)}"
-            pipeline_steps = ["Upload", "Validation", "Structure Parsing", "Metadata Generated", "Ready for Chunking"]
-        elif ext in ["png", "jpg", "jpeg", "bmp", "tiff"]:
-            parser_used = "ImageProcessor"
-            ocr_engine = first_doc_meta.get("ocr_engine", "Unknown")
-            dims = first_doc_meta.get("dimensions", {})
-            if dims:
-                resolution = f"{dims.get('width', 0)} x {dims.get('height', 0)}"
-            pipeline_steps = ["Upload", "Validation", "Image Preprocessing", "OCR Extraction", "Metadata Generated", "Ready for Chunking"]
-        elif ext in ["mp3", "wav", "m4a", "flac"]:
-            parser_used = "AudioProcessor"
-            audio_duration = f"{first_doc_meta.get('duration_sec', 0.0):.2f}s"
-            audio_channels = "Mono" if first_doc_meta.get("channels", 1) == 1 else "Stereo"
-            audio_sr = f"{first_doc_meta.get('sample_rate', 0)} Hz"
-            languages_list = first_doc_meta.get("languages", [])
-            pipeline_steps = ["Upload", "Validation", "Audio Preprocessing", "Speech Recognition", "Metadata Generated", "Ready for Chunking"]
-        else:
-            pipeline_steps = ["Upload", "Validation", "Processing", "Metadata Generated", "Ready for Chunking"]
+            # Displays audio/image players
+            if ext in ["png", "jpg", "jpeg", "bmp", "tiff"]:
+                st.image(file_data["file_path"], use_container_width=True)
+            elif ext in ["mp3", "wav", "m4a", "flac"]:
+                st.audio(file_data["file_path"])
 
-        steps_html = " ➔ ".join(f"<span style='background: rgba(99, 102, 241, 0.15); color: #c084fc; padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; border: 1px solid rgba(168, 85, 247, 0.3); font-weight: 600;'>{step}</span>" for step in pipeline_steps)
-
-        info_table_rows = f"""
-        <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; width: 180px; font-size: 0.9rem;">File Name</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{file_data['file_name']}</td></tr>
-        <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">File Type</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem; text-transform: uppercase;">{ext}</td></tr>
-        <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">File Size</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{file_size_mb:.2f} MB ({file_data['file_size']/1024:.1f} KB)</td></tr>
-        <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Upload Timestamp</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{upload_time}</td></tr>
-        <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Processing Status</td><td style="padding: 6px 0; color: #10b981; font-weight: bold; font-size: 0.9rem;">Success 🟢</td></tr>
-        <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Parser Used</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{parser_used}</td></tr>
-        """
-        
-        if ext in ["png", "jpg", "jpeg", "bmp", "tiff"]:
-            info_table_rows += f"""
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">OCR Engine Used</td><td style="padding: 6px 0; color: #34d399; font-weight: bold; font-size: 0.9rem;">{ocr_engine}</td></tr>
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Image Resolution</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{resolution}</td></tr>
-            """
-        elif ext == "pdf":
-            info_table_rows += f"<tr style='border-bottom: 1px solid rgba(255,255,255,0.03);'><td style='padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;'>Number of Pages</td><td style='padding: 6px 0; color: #f8fafc; font-size: 0.9rem;'>{pages_count}</td></tr>"
-        elif ext == "docx":
-            info_table_rows += f"<tr style='border-bottom: 1px solid rgba(255,255,255,0.03);'><td style='padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;'>Number of Blocks</td><td style='padding: 6px 0; color: #f8fafc; font-size: 0.9rem;'>{blocks_count}</td></tr>"
-        elif ext in ["mp3", "wav", "m4a", "flac"]:
-            lang_str = ", ".join(f"{l.get('language','Unknown').upper()} ({l.get('probability',0.0)*100:.1f}%)" for l in languages_list)
-            info_table_rows += f"""
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Detected Language</td><td style="padding: 6px 0; color: #34d399; font-weight: bold; font-size: 0.9rem;">{lang_str}</td></tr>
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Audio Duration</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{audio_duration}</td></tr>
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);"><td style="padding: 6px 0; font-weight: 600; color: #94a3b8; font-size: 0.9rem;">Channels / Sample Rate</td><td style="padding: 6px 0; color: #f8fafc; font-size: 0.9rem;">{audio_channels} / {audio_sr}</td></tr>
-            """
-
-        st.markdown(f"""
-        <div class="glass-card" style="padding: 22px; margin-bottom: 25px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;">
-                <span style="font-size: 1.3rem; font-weight: 700; color: #f8fafc; font-family: 'Outfit', sans-serif;">📋 File Information Card</span>
-                <span class="badge {badge_cls}">{ext}</span>
-            </div>
-            
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-                {info_table_rows}
-            </table>
-            
-            <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 15px;">
-                <div style="font-size: 0.85rem; font-weight: 600; color: #94a3b8; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">Processing Pipeline</div>
-                <div style="line-height: 2.2; margin-left: 5px;">
-                    {steps_html}
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Display preview for images
-        if ext in ["png", "jpg", "jpeg", "bmp", "tiff"]:
-            st.image(file_data["file_path"], caption=file_data["file_name"], use_container_width=True)
-            
-            # Display image OCR metrics
-            doc = file_data["documents"][0]
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                st.metric("OCR Engine", doc.metadata.get("ocr_engine", "Unknown"))
-            with col_b:
-                conf = doc.metadata.get("confidence", 0.0)
-                st.metric("Avg Confidence", f"{conf * 100:.1f}%")
-            with col_c:
-                dur = doc.metadata.get("processing_duration_sec", 0.0)
-                st.metric("Processing Time", f"{dur:.2f}s")
-                
-        # Display player for audios
-        if ext in ["mp3", "wav", "m4a", "flac"]:
-            st.audio(file_data["file_path"])
-            
-            # Display audio transcription metrics
-            doc = file_data["documents"][0]
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                st.metric("STT Engine", doc.metadata.get("transcription_engine", "Unknown"))
-            with col_b:
-                langs = doc.metadata.get("languages", [])
-                conf_val = langs[0].get("probability", 0.0) if langs else 0.0
-                st.metric("Detection Conf.", f"{conf_val * 100:.1f}%")
-            with col_c:
-                dur = doc.metadata.get("processing_duration_sec", 0.0)
-                st.metric("Transcription Time", f"{dur:.2f}s")
-        
-        # Display structures under this card
-        docs_list = file_data["documents"]
-        
-        # Group page/block view under tabs or expander
-        expander_label = f"Show Extracted Content ({len(docs_list)} Blocks/Pages)"
-        with st.expander(expander_label, expanded=False):
-            # Display pages/blocks cleanly
-            for doc in docs_list:
-                meta = doc.metadata
-                if ext == "pdf":
-                    header = f"Page {meta['page_number']} / {meta['total_pages']}"
-                elif ext == "docx":
-                    header = f"Block {meta['block_index']} ({meta['block_type'].capitalize()})"
-                elif ext in ["mp3", "wav", "m4a", "flac"]:
-                    header = "Speech Transcript"
-                else:
-                    header = "OCR Extracted Text"
-                    
-                st.markdown(f"##### 📍 {header}")
-                st.text_area(
-                    label=f"Clean Transcript Text ({len(doc.text)} chars)",
-                    value=doc.text,
-                    height=150,
-                    key=f"{name}_{header}",
-                    disabled=True
-                )
-                
-                # Show structured audio timeline segment timestamps if available
-                if ext in ["mp3", "wav", "m4a", "flac"] and "segments" in meta and meta["segments"]:
-                    with st.expander("🕒 Show Transcription Timeline Segments", expanded=False):
-                        st.write("Timestamped dialogue timeline:")
-                        timeline_md = ""
-                        for seg in meta["segments"]:
-                            start_min = int(seg['start'] // 60)
-                            start_sec = seg['start'] % 60
-                            end_min = int(seg['end'] // 60)
-                            end_sec = seg['end'] % 60
-                            time_lbl = f"`[{start_min:02d}:{start_sec:05.2f} ➔ {end_min:02d}:{end_sec:05.2f}]`"
-                            timeline_md += f"{time_lbl} &nbsp; {seg['text']}\n\n"
-                        st.markdown(timeline_md, unsafe_allow_html=True)
-                
-                # Show detailed bounding boxes for images if available
-                if ext in ["png", "jpg", "jpeg", "bmp", "tiff"] and "blocks" in meta and meta["blocks"]:
-                    with st.expander("🔍 Show Detailed Text Blocks & Bounding Boxes", expanded=False):
-                        st.write("Bounding box locations and segment confidences:")
-                        st.dataframe(meta["blocks"])
-                
-                # Show specific metadata dictionary
-                st.json(meta, expanded=False)
-                st.markdown("---")
-                
-        # Developer Mode Chunking & Embedding Details
-        if st.session_state.get("dev_mode", False) and "chunks" in file_data:
-            chunks = file_data["chunks"]
-            with st.expander("🔧 Developer Mode: Chunking & Embedding Details", expanded=True):
-                st.markdown("#### 📊 Chunking & Embedding Metrics")
-                m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-                
-                # Retrieve average embedding time from chunks metadata
-                embed_times = [c.metadata.get("embedding_time_ms", 0.0) for c in chunks if "embedding_time_ms" in c.metadata]
-                avg_emb_time = sum(embed_times) / len(embed_times) if embed_times else 0.0
-                
-                with m_col1:
-                    st.metric("Total Chunks", len(chunks))
-                with m_col2:
-                    avg_size = sum(c.character_count for c in chunks) / len(chunks) if chunks else 0
-                    st.metric("Avg Chunk Size", f"{avg_size:.1f} chars")
-                with m_col3:
-                    st.metric("Avg Embedding Time", f"{avg_emb_time:.1f} ms")
-                with m_col4:
-                    total_tokens = sum(c.token_estimate for c in chunks)
-                    st.metric("Est. Total Tokens", total_tokens)
-                
-                # Interactive Table
-                st.markdown("#### 📑 Chunks & Vector Preview Table")
-                table_data = []
-                for c in chunks:
-                    v_arr = file_data["vectors"][c.chunk_index] if "vectors" in file_data and len(file_data["vectors"]) > c.chunk_index else None
-                    v_preview = "[" + ", ".join(f"{val:.4f}" for val in v_arr[:8]) + ", ...]" if v_arr is not None else "N/A"
-                    
-                    table_data.append({
-                        "Chunk ID": c.chunk_id,
-                        "FAISS ID": c.metadata.get("faiss_id", "N/A"),
-                        "Source Reference": c.metadata.get("source_reference", "N/A"),
-                        "Size (chars)": c.character_count,
-                        "L2 Norm": c.metadata.get("embedding_norm", "N/A"),
-                        "Vector Preview (8-dim)": v_preview,
-                        "Text Preview": c.text[:80] + "..." if len(c.text) > 80 else c.text
-                    })
-                st.dataframe(table_data, use_container_width=True)
-                
-                # Metadata Preview
-                st.markdown("#### ⚙️ Chunk Metadata Inspection")
-                selected_chunk_id = st.selectbox(
-                    "Select a Chunk to inspect its full Metadata JSON:",
-                    options=[c.chunk_id for c in chunks],
-                    key=f"inspect_{name}"
-                )
-                if selected_chunk_id:
-                    selected_chunk = next(c for c in chunks if c.chunk_id == selected_chunk_id)
-                    st.json(selected_chunk.metadata)
-
-# 8. Q&A Grounded Chat Playground
-st.markdown("---")
-st.markdown("### 💬 Grounded Q&A Chat Playground")
-st.info("Ask questions in English, Tamil, or Mixed languages. Answers are strictly grounded on your indexed documents.")
-
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
-# Display previous conversation history
-for msg in st.session_state.chat_history:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-        # Render references list if available
-        if msg["role"] == "assistant" and msg.get("success", False) and msg.get("retrieved_chunks"):
-            with st.expander("🎯 Retrieved Reference Chunks"):
-                for idx, c in enumerate(msg["retrieved_chunks"], 1):
-                    st.markdown(f"**[{idx}] {c['file']} ({c['ref']})** - Similarity: `{c['score']:.4f}`")
-                    st.caption(c["text"])
-            if st.session_state.get("dev_mode", False):
-                with st.expander("🔧 Developer Mode: LLM & Prompt Metrics"):
-                    st.markdown(f"• **Inference Latency:** `{msg.get('latency_metrics', {}).get('inference_time_ms', 0.0):.2f} ms`")
-                    st.markdown(f"• **Prompt Size:** `{msg.get('prompt_size_chars', 0)} chars`")
-                    st.markdown(f"• **Prompt Tokens (Input):** `{msg.get('token_statistics', {}).get('prompt_eval_count', 'N/A')}`")
-                    st.markdown(f"• **Response Tokens (Output):** `{msg.get('token_statistics', {}).get('eval_count', 'N/A')}`")
-
-# Chat input from user
-if prompt := st.chat_input("Ask a question about your documents..."):
-    # Display user query
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    st.session_state.chat_history.append({"role": "user", "content": prompt})
+with tab_chat:
+    st.markdown("### 💬 Grounded Chat Q&A")
     
-    # 1. Search semantic matches
-    from src.retrieval import RetrievalManager, RetrievalConfig
-    threshold_val = st.session_state.get("qa_threshold", 0.70)
-    top_k_val = st.session_state.get("qa_top_k", 5)
-    dup_removal = st.session_state.get("qa_dup_removal", True)
-    
-    config = RetrievalConfig(
-        top_k=int(top_k_val),
-        similarity_threshold=float(threshold_val),
-        duplicate_removal=dup_removal
+    # Mode Selector
+    mode_sel = st.selectbox(
+        "Select Retrieval Mode Override:",
+        options=["Automatic", "Semantic Search", "Document Summary", "Overview", "Translation"],
+        key="ui_retrieval_mode"
     )
-    ret_manager = RetrievalManager()
-    ret_res = ret_manager.search(prompt, config=config)
     
-    # 2. Invoke local LLM generation
-    from src.llm import LLMManager
-    from src.config.settings import LLM_MODEL_NAME
-    llm_manager = LLMManager()
-    
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            ans_res = llm_manager.generate_grounded_answer(ret_res)
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+        
+    col_cc1, col_cc2 = st.columns([5, 1])
+    with col_cc2:
+        if st.button("🧹 Clear Chat", use_container_width=True):
+            st.session_state.chat_history = []
+            st.session_state.retrieval_latencies = []
+            st.session_state.llm_latencies = []
+            st.rerun()
+            
+    # Render chat bubbles
+    for chat_idx, msg in enumerate(st.session_state.chat_history):
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            
+            # If assistant message has chunks, render cards
+            if msg["role"] == "assistant" and msg.get("success", False):
+                # Copy Answer button container
+                st.code(msg["content"], language="text")
+                
+                # Expandable chunk cards
+                if msg.get("retrieved_chunks"):
+                    with st.expander("📖 Show Retrieved Context Chunks"):
+                        for idx, c in enumerate(msg["retrieved_chunks"], 1):
+                            st.markdown(
+                                f"""
+                                <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); margin-bottom: 8px;">
+                                    <div style="font-weight: bold; font-size: 14px; color: #f8fafc;">📄 {c['file']}</div>
+                                    <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                                        <span>📍 Reference: <b>{c['ref']}</b></span> &nbsp;|&nbsp; 
+                                        <span>🎯 Similarity: <b>{c['score'] * 100:.1f}%</b></span> &nbsp;|&nbsp;
+                                        <span>🔢 Chunk: <b>#{c['id'].split('_')[-1]}</b></span>
+                                    </div>
+                                    <div style="margin-top: 8px; font-family: monospace; font-size: 12px; color: #cbd5e1; white-space: pre-wrap;">{c['text']}</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+                
+                # Pipeline Details Explanations
+                with st.expander("🔧 Pipeline Retrieval metrics"):
+                    st.markdown(f"• **Detected Intent:** `{msg.get('intent', 'N/A')}`")
+                    st.markdown(f"• **Retrieval Mode:** `{msg.get('retrieval_mode', 'N/A')}`")
+                    st.markdown(f"• **Threshold Used:** `{msg.get('threshold', 0.0):.2f}`")
+                    st.markdown(f"• **Highest Similarity:** `{msg.get('highest_similarity', 0.0):.4f}`")
+                    st.markdown(f"• **Lowest Similarity:** `{msg.get('lowest_similarity', 0.0):.4f}`")
+                    st.markdown(f"• **Average Similarity:** `{msg.get('average_similarity', 0.0):.4f}`")
+                    st.markdown(f"• **Prompt Size:** `{msg.get('prompt_size_chars', 0)} chars`")
+                    st.markdown(f"• **Inference Latency:** `{msg.get('latency_metrics', {}).get('inference_time_ms', 0.0):.2f} ms`")
+
+    # Chat input
+    if prompt := st.chat_input("Ask a question about your documents..."):
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        
+        # 1. Pipeline Status Visualizer
+        with st.status("Executing RAG Pipeline...", expanded=True) as status_bar:
+            status_bar.write("🔍 Running Intent Classification...")
+            time.sleep(0.1)
+            
+            # Setup Retrieval Config
+            from src.retrieval import RetrievalManager, RetrievalConfig
+            threshold_val = st.session_state.get("qa_threshold", 0.70)
+            top_k_val = st.session_state.get("qa_top_k", 5)
+            dup_removal = st.session_state.get("qa_dup_removal", True)
+            
+            config = RetrievalConfig(
+                top_k=int(top_k_val),
+                similarity_threshold=float(threshold_val),
+                duplicate_removal=dup_removal,
+                retrieval_mode=mode_sel
+            )
+            
+            status_bar.write("🧠 Generating Multilingual Embeddings...")
+            time.sleep(0.1)
+            
+            status_bar.write("🗂️ Running Nearest-Neighbor FAISS Vector Search...")
+            time.sleep(0.1)
+            
+            status_bar.write("⚖️ Ranking and Filtering Results...")
+            time.sleep(0.1)
+            
+            # Search
+            ret_manager = RetrievalManager()
+            result = ret_manager.search(prompt, config=config)
+            
+            status_bar.write("📑 Assembling Context blocks...")
+            time.sleep(0.1)
+            
+            status_bar.write("🤖 Invoking Local Ollama generation...")
+            from src.llm import LLMManager
+            llm_manager = LLMManager()
+            ans_res = llm_manager.generate_grounded_answer(result)
+            
+            status_bar.update(label="Pipeline processing complete!", state="complete", expanded=False)
+            
+        # Update aggregate stats
+        if result.success:
+            st.session_state.retrieval_latencies.append(result.latency_metrics.get("total_latency_ms", 0.0))
+        if ans_res.success:
+            st.session_state.llm_latencies.append(ans_res.latency_metrics.get("inference_time_ms", 0.0))
+            
+        with st.chat_message("assistant"):
+            if result.is_low_confidence:
+                st.warning("⚠️ Low confidence retrieval. Answer may be less reliable.")
             st.markdown(ans_res.answer)
             
-            # Show citation chunks
-            if ans_res.success and ret_res.retrieved_chunks:
-                with st.expander("🎯 Retrieved Reference Chunks"):
-                    for idx, c in enumerate(ret_res.retrieved_chunks, 1):
-                        st.markdown(f"**[{idx}] {c.source_file} ({c.source_reference})** - Similarity: `{c.similarity_score:.4f}`")
-                        st.caption(c.chunk_text)
+            # Copy Code box
+            st.code(ans_res.answer, language="text")
             
-            # Developer Dashboard
+            # Render context cards
+            if result.success and result.retrieved_chunks:
+                with st.expander("📖 Show Retrieved Context Chunks"):
+                    for idx, c in enumerate(result.retrieved_chunks, 1):
+                        st.markdown(
+                            f"""
+                            <div style="background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06); margin-bottom: 8px;">
+                                <div style="font-weight: bold; font-size: 14px; color: #f8fafc;">📄 {c.source_file}</div>
+                                <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">
+                                    <span>📍 Reference: <b>{c.source_reference}</b></span> &nbsp;|&nbsp; 
+                                    <span>🎯 Similarity: <b>{c.similarity_score * 100:.1f}%</b></span> &nbsp;|&nbsp;
+                                    <span>🔢 Chunk: <b>#{c.chunk_id.split('_')[-1]}</b></span>
+                                </div>
+                                <div style="margin-top: 8px; font-family: monospace; font-size: 12px; color: #cbd5e1; white-space: pre-wrap;">{c.chunk_text}</div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                        
+            # Developer stats
             if st.session_state.get("dev_mode", False):
                 with st.expander("🔧 Developer Mode: LLM & Prompt Metrics", expanded=True):
-                    st.markdown(f"• **Model Tag:** `{LLM_MODEL_NAME}`")
-                    st.markdown(f"• **Inference Latency:** `{ans_res.latency_metrics.get('inference_time_ms', 0.0):.2f} ms`")
+                    st.markdown(f"• **Detected Intent:** `{result.intent}`")
+                    st.markdown(f"• **Retrieval Mode:** `{result.retrieval_mode}`")
+                    st.markdown(f"• **Threshold Used:** `{result.statistics.get('threshold', 0.0):.2f}`")
+                    st.markdown(f"• **Highest Similarity:** `{result.highest_similarity:.4f}`")
+                    st.markdown(f"• **Lowest Similarity:** `{result.lowest_similarity:.4f}`")
+                    st.markdown(f"• **Average Similarity:** `{result.average_similarity:.4f}`")
                     st.markdown(f"• **Prompt Size:** `{len(prompt)} chars`")
+                    st.markdown(f"• **Inference Latency:** `{ans_res.latency_metrics.get('inference_time_ms', 0.0):.2f} ms`")
                     
-                    token_stats = ans_res.token_statistics
-                    prompt_toks = token_stats.get("prompt_eval_count", "N/A")
-                    resp_toks = token_stats.get("eval_count", "N/A")
-                    st.markdown(f"• **Prompt Tokens (Input):** `{prompt_toks}`")
-                    st.markdown(f"• **Response Tokens (Output):** `{resp_toks}`")
-                    
-                    # Latency timings
-                    st.markdown("**Latency Breakdown JSON:**")
-                    st.json(ans_res.latency_metrics)
-                    
-    # Save to history list
-    st.session_state.chat_history.append({
-        "role": "assistant",
-        "content": ans_res.answer,
-        "success": ans_res.success,
-        "retrieved_chunks": [
-            {
-                "file": c.source_file,
-                "ref": c.source_reference,
-                "score": c.similarity_score,
-                "text": c.chunk_text
-            } for c in ret_res.retrieved_chunks
-        ] if ret_res.success else [],
-        "latency_metrics": ans_res.latency_metrics,
-        "token_statistics": ans_res.token_statistics,
-        "prompt_size_chars": len(prompt)
-    })
+        # Append assistant response to history
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": ans_res.answer,
+            "success": ans_res.success,
+            "intent": result.intent,
+            "retrieval_mode": result.retrieval_mode,
+            "threshold": result.statistics.get("threshold", 0.0),
+            "highest_similarity": result.highest_similarity,
+            "lowest_similarity": result.lowest_similarity,
+            "average_similarity": result.average_similarity,
+            "prompt_size_chars": len(prompt),
+            "latency_metrics": ans_res.latency_metrics,
+            "token_statistics": ans_res.token_statistics,
+            "retrieved_chunks": [
+                {
+                    "id": c.chunk_id,
+                    "file": c.source_file,
+                    "ref": c.source_reference,
+                    "score": c.similarity_score,
+                    "text": c.chunk_text
+                } for c in result.retrieved_chunks
+            ] if result.success else []
+        })
+        st.rerun()

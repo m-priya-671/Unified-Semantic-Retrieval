@@ -216,3 +216,93 @@ class IndexManager:
         empty_stats = {"total_documents": 0, "average_chunks_per_document": 0.0}
         IndexPersistence.save(self.index_dir, self.engine.index, empty_stats, self.model_name)
         logger.info("Vector store reset complete.")
+
+    def delete_document(self, document_id: str):
+        """Deletes document metadata and status, then rebuilds the FAISS index from remaining items.
+        
+        Args:
+            document_id: The document hash ID to remove.
+        """
+        logger.info(f"Initiating rebuild-based deletion for document: {document_id}")
+        
+        # 1. Start database transaction
+        conn = sqlite3.connect(self.metadata_store.db_path)
+        conn.isolation_level = None
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("BEGIN TRANSACTION")
+            
+            # Delete from vector_metadata
+            cursor.execute("DELETE FROM vector_metadata WHERE document_id = ?", (document_id,))
+            # Delete from document_index_status
+            cursor.execute("DELETE FROM document_index_status WHERE document_hash = ?", (document_id,))
+            
+            # Fetch all remaining chunks
+            cursor.execute(
+                "SELECT faiss_id, chunk_id, document_id, source_file, source_reference, chunk_text, embedding_model "
+                "FROM vector_metadata ORDER BY faiss_id"
+            )
+            rows = cursor.fetchall()
+            
+            # 2. Reset the FAISS engine
+            self.engine.reset()
+            
+            if rows:
+                import hashlib
+                from src.embedding.embedding_cache import EmbeddingCache
+                cache = EmbeddingCache()
+                
+                new_vectors = []
+                new_ids = []
+                
+                # Re-map all faiss_ids contiguously to avoid index fragmentation
+                for idx, row in enumerate(rows):
+                    orig_faiss_id, chunk_id, doc_id, src_file, src_ref, text, model = row
+                    
+                    chunk_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    vector = cache.get(chunk_hash, model)
+                    
+                    if vector is None:
+                        # Fallback zero vector if cache miss occurs
+                        logger.warning(f"Cache miss for text: '{text[:30]}'. Using fallback zero vector.")
+                        vector = np.zeros(self.dimension, dtype=np.float32)
+                        
+                    new_vectors.append(vector)
+                    new_ids.append(idx)
+                    
+                    # Update faiss_id in database row
+                    cursor.execute(
+                        "UPDATE vector_metadata SET faiss_id = ? WHERE chunk_id = ?",
+                        (idx, chunk_id)
+                    )
+                
+                # Stack and add to FAISS
+                vectors_arr = np.vstack(new_vectors).astype(np.float32)
+                ids_arr = np.array(new_ids, dtype=np.int64)
+                self.engine.add(vectors_arr, ids_arr)
+                
+                logger.info(f"Rebuilt index with {len(rows)} remaining chunks.")
+            else:
+                logger.info("No documents remaining. Clean empty index created.")
+                
+            # 3. Persist FAISS index file on disk
+            temp_stats = {
+                "total_documents": self._get_doc_count_tx(cursor),
+                "average_chunks_per_document": self._get_avg_chunks_tx(cursor)
+            }
+            IndexPersistence.save(self.index_dir, self.engine.index, temp_stats, self.model_name)
+            
+            # Commit the transaction
+            cursor.execute("COMMIT")
+            
+        except Exception as e:
+            logger.error(f"Failed to delete document and rebuild index: {str(e)}")
+            try:
+                cursor.execute("ROLLBACK")
+            except Exception as sql_err:
+                logger.error(f"SQL Rollback failed: {str(sql_err)}")
+            self.reload_index()
+            raise e
+        finally:
+            conn.close()

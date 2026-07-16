@@ -170,6 +170,7 @@ class LLMManager:
             question_id=question_id,
             timestamp=timestamp,
             prompt_version=PROMPT_VERSION,
+            is_low_confidence=retrieval_result.is_low_confidence,
             latency_metrics=latency_metrics,
             token_statistics=token_stats
         )

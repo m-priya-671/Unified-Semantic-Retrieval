@@ -199,6 +199,139 @@ def test_response_validators():
     assert "could not be validated against the retrieved documents" in ans_hallucinate.answer
     logger.info("Validation catches empty texts and hallucinated entity names -> OK")
 
+def test_summaries_and_overviews_neighbors():
+    logger.info("=== Testing Summaries & Overviews Neighbor Chunks ===")
+    from src.retrieval import RetrievalManager, RetrievalConfig
+    from src.vector_store import IndexManager
+    import numpy as np
+    
+    idx_manager = IndexManager()
+    idx_manager.clear_all()
+    
+    # Index 5 contiguous chunks for a document
+    chunks = []
+    from src.text_processing import Chunk
+    for i in range(1, 6):
+        chunks.append(Chunk(
+            chunk_id=f"doc1_chunk_{i}",
+            document_id="doc1",
+            chunk_index=i-1,
+            text=f"This is segment number {i} of the test document text.",
+            metadata={
+                "source_file": "neighbors_test.pdf",
+                "source_reference": f"Page {i}",
+                "embedding_norm": 1.0
+            },
+            character_count=50,
+            token_estimate=10
+        ))
+        
+    from src.embedding import EmbeddingManager
+    emb_manager = EmbeddingManager()
+    vectors, updated_chunks = emb_manager.embed_chunks(chunks)
+    idx_manager.add_vectors_and_metadata(vectors, updated_chunks)
+    
+    ret_manager = RetrievalManager(embedding_manager=emb_manager, index_manager=idx_manager)
+    config = RetrievalConfig(top_k=2, similarity_threshold=0.5, retrieval_mode="Document Summary")
+    
+    result = ret_manager.search("segment number 3", config=config)
+    assert result.success is True
+    assert result.intent == "SUMMARY"
+    
+    assert len(result.retrieved_chunks) == 5
+    texts = [c.chunk_text for c in result.retrieved_chunks]
+    assert "segment number 1" in texts[0]
+    assert "segment number 5" in texts[-1]
+    logger.info("Summaries & Overviews Neighbors fetch check: OK")
+
+def test_low_confidence_fallback():
+    logger.info("=== Testing Low-Confidence Retrieval Fallback ===")
+    from src.retrieval import RetrievalManager, RetrievalConfig
+    from src.vector_store import IndexManager
+    import numpy as np
+    
+    idx_manager = IndexManager()
+    idx_manager.clear_all()
+    
+    from src.text_processing import Chunk
+    c = Chunk(
+        chunk_id="fallback_chunk",
+        document_id="doc_fb",
+        chunk_index=0,
+        text="Special target secret text for testing confidence threshold fallbacks.",
+        metadata={
+            "source_file": "fb.pdf",
+            "source_reference": "Page 1",
+            "embedding_norm": 1.0
+        },
+        character_count=70,
+        token_estimate=15
+    )
+    from src.embedding import EmbeddingManager
+    emb_manager = EmbeddingManager()
+    vector, updated_chunks = emb_manager.embed_chunks([c])
+    idx_manager.add_vectors_and_metadata(vector, updated_chunks)
+    
+    ret_manager = RetrievalManager(embedding_manager=emb_manager, index_manager=idx_manager)
+    config = RetrievalConfig(top_k=1, similarity_threshold=0.99, retrieval_mode="Semantic Search")
+    
+    result = ret_manager.search("something completely unrelated", config=config)
+    assert result.success is True
+    assert result.is_low_confidence is True
+    assert len(result.retrieved_chunks) == 1
+    assert "Special target secret text" in result.retrieved_chunks[0].chunk_text
+    logger.info("Low-confidence fallback check: OK")
+
+def test_rebuild_based_deletions():
+    logger.info("=== Testing Rebuild-Based Document Deletions ===")
+    from src.vector_store import IndexManager
+    from src.text_processing import Chunk
+    import numpy as np
+    
+    idx_manager = IndexManager()
+    idx_manager.clear_all()
+    
+    c_a = Chunk(
+        chunk_id="docA_chunk_1", document_id="docA", chunk_index=0,
+        text="Text from document A content.",
+        metadata={
+            "source_file": "docA.pdf",
+            "source_reference": "Page 1"
+        },
+        character_count=30, token_estimate=10
+    )
+    c_b = Chunk(
+        chunk_id="docB_chunk_1", document_id="docB", chunk_index=0,
+        text="Text from document B content.",
+        metadata={
+            "source_file": "docB.pdf",
+            "source_reference": "Page 1"
+        },
+        character_count=30, token_estimate=10
+    )
+    
+    from src.embedding import EmbeddingManager
+    emb_manager = EmbeddingManager()
+    v_a, updated_a = emb_manager.embed_chunks([c_a])
+    v_b, updated_b = emb_manager.embed_chunks([c_b])
+    
+    idx_manager.add_vectors_and_metadata(v_a, updated_a)
+    idx_manager.add_vectors_and_metadata(v_b, updated_b)
+    
+    assert idx_manager.engine.total == 2
+    
+    idx_manager.delete_document("docA")
+    assert idx_manager.engine.total == 1
+    
+    stats = idx_manager.metadata_store.get_index_stats()
+    assert stats["total_documents"] == 1
+    assert stats["total_vectors"] == 1
+    
+    all_docs = idx_manager.metadata_store.get_all_documents()
+    assert len(all_docs) == 1
+    assert all_docs[0]["document_hash"] == "docB"
+    logger.info("Rebuild-based document deletion and FAISS synchronization check: OK")
+
 def run_tests():
     logger.info("Starting Milestone 8 automated tests...")
     test_grounded_answer_success()
@@ -208,6 +341,9 @@ def run_tests():
     test_long_context_truncation()
     test_duplicate_citations()
     test_response_validators()
+    test_summaries_and_overviews_neighbors()
+    test_low_confidence_fallback()
+    test_rebuild_based_deletions()
     logger.info("ALL MILESTONE 8 TESTS PASSED SUCCESSFULLY!")
 
 if __name__ == "__main__":

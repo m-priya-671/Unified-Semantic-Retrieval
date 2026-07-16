@@ -49,6 +49,7 @@ class SearchUtils:
             if fid in id_to_metadata:
                 row = id_to_metadata[fid]
                 structured_results.append({
+                    "faiss_id": fid,
                     "chunk_id": row["chunk_id"],
                     "document_id": row["document_id"],
                     "source_file": row["source_file"],

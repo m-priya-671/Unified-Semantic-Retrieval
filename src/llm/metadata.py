@@ -13,5 +13,6 @@ class GroundedAnswer:
     question_id: str = ""
     timestamp: str = ""
     prompt_version: str = "1.0"
+    is_low_confidence: bool = False
     latency_metrics: Dict[str, float] = field(default_factory=dict)
     token_statistics: Dict[str, int] = field(default_factory=dict)

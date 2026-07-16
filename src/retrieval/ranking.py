@@ -12,7 +12,7 @@ class RankingProcessor:
         results: List[Dict[str, Any]], 
         threshold: float, 
         duplicate_removal: bool
-    ) -> Tuple[List[RetrievalChunk], int]:
+    ) -> Tuple[List[RetrievalChunk], int, bool]:
         """Filters, deduplicates, and classifies candidate chunks.
         
         Args:
@@ -21,12 +21,27 @@ class RankingProcessor:
             duplicate_removal: True to filter duplicate chunk IDs.
             
         Returns:
-            Tuple of (list of ranked RetrievalChunk objects, duplicates_removed_count)
+            Tuple of (list of ranked RetrievalChunk objects, duplicates_removed_count, is_low_confidence)
         """
         seen_ids = set()
         retrieved_chunks = []
         duplicates_removed = 0
+        is_low_confidence = False
         
+        if not results:
+            return [], 0, False
+            
+        # Determine highest candidate score
+        highest_score = float(results[0].get("similarity_score", 0.0))
+        
+        # Determine active threshold. If no candidate exceeds threshold, trigger fallback
+        active_threshold = threshold
+        if highest_score < threshold:
+            # Low confidence fallback! Grab top matches within a small bracket
+            active_threshold = max(highest_score - 0.02, 0.0)
+            is_low_confidence = True
+            logger.warning(f"Low confidence fallback triggered. Lowering threshold from {threshold:.4f} to {active_threshold:.4f}")
+            
         for r in results:
             chunk_id = r.get("chunk_id")
             score = float(r.get("similarity_score", 0.0))
@@ -39,17 +54,20 @@ class RankingProcessor:
                 seen_ids.add(chunk_id)
                 
             # 2. Similarity Threshold Filter
-            if score < threshold:
-                logger.debug(f"Chunk '{chunk_id}' filtered out. Score {score:.4f} is below threshold {threshold:.4f}")
+            if score < active_threshold:
+                logger.debug(f"Chunk '{chunk_id}' filtered out. Score {score:.4f} is below active threshold {active_threshold:.4f}")
                 continue
                 
             # 3. Configurable Confidence Level Assignment
-            if score >= 0.80:
-                confidence = "High"
-            elif score >= 0.70:
-                confidence = "Medium"
-            else:
+            if is_low_confidence:
                 confidence = "Low"
+            else:
+                if score >= 0.80:
+                    confidence = "High"
+                elif score >= 0.70:
+                    confidence = "Medium"
+                else:
+                    confidence = "Low"
                 
             retrieved_chunks.append(
                 RetrievalChunk(
@@ -64,5 +82,5 @@ class RankingProcessor:
             )
             
         logger.info(f"Ranking processing complete. Kept {len(retrieved_chunks)} / {len(results)} chunks "
-                    f"(Duplicates removed: {duplicates_removed})")
-        return retrieved_chunks, duplicates_removed
+                    f"(Duplicates removed: {duplicates_removed}, low_confidence: {is_low_confidence})")
+        return retrieved_chunks, duplicates_removed, is_low_confidence

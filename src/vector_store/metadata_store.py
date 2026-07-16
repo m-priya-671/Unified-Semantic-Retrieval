@@ -239,3 +239,45 @@ class MetadataStore:
         except Exception as e:
             logger.error(f"Failed to clear MetadataStore records: {str(e)}")
             raise e
+
+    def get_neighboring_chunks(self, document_id: str, target_faiss_id: int, limit: int = 5) -> List[Dict[str, Any]]:
+        """Retrieves chunks of a document that surround the target faiss_id.
+        
+        Args:
+            document_id: Target document ID.
+            target_faiss_id: The FAISS ID of the top semantic match.
+            limit: Number of chunks to fetch before and after.
+            
+        Returns:
+            A list of dictionary chunk metadata records.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT faiss_id, chunk_id, document_id, source_file, source_reference, chunk_text "
+                    "FROM vector_metadata WHERE document_id = ? AND faiss_id BETWEEN ? AND ? "
+                    "ORDER BY faiss_id",
+                    (document_id, target_faiss_id - limit, target_faiss_id + limit)
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to fetch neighboring chunks: {str(e)}")
+            return []
+
+    def get_all_documents(self) -> List[Dict[str, Any]]:
+        """Retrieves all indexed document status records and their filenames."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT d.document_hash, d.indexed_chunks, d.total_chunks, d.last_indexed, d.index_status, "
+                    "(SELECT source_file FROM vector_metadata WHERE document_id = d.document_hash LIMIT 1) as file_name "
+                    "FROM document_index_status d"
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error fetching documents index statuses: {str(e)}")
+            return []
