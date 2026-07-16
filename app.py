@@ -347,7 +347,12 @@ with st.sidebar:
     st.markdown("• **Query Latency:** *N/A (Coming in M7)*")
     
     st.markdown("---")
-    if st.button("Clear Parsing Memory", type="primary", use_container_width=True):# 5. Header Title Banner
+    if st.button("Clear Parsing Memory", type="primary", use_container_width=True):
+        st.session_state.parsed_files = {}
+        st.success("Parsing cache cleared.")
+        st.rerun()
+
+# 5. Header Title Banner
 st.markdown("<div class='banner-title'>Offline Multimodal RAG System</div>", unsafe_allow_html=True)
 st.markdown("<div class='banner-subtitle'>English • Tamil • AI-Powered Local Knowledge Assistant</div>", unsafe_allow_html=True)
 
