@@ -150,7 +150,7 @@ def get_hardware_recommendation() -> str:
             return f"Balanced / Quality profile (Detected GPU has {total_mem} MiB VRAM)"
     except Exception:
         try:
-            import torch
+            import torch  # type: ignore
             if torch.cuda.is_available():
                 device_id = torch.cuda.current_device()
                 total_mem = torch.cuda.get_device_properties(device_id).total_memory / (1024 * 1024)
