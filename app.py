@@ -630,16 +630,26 @@ with tab_chat:
                                 unsafe_allow_html=True
                             )
                 
-                # Pipeline Details Explanations
-                with st.expander("🔧 Pipeline Retrieval metrics"):
-                    st.markdown(f"• **Detected Intent:** `{msg.get('intent', 'N/A')}`")
-                    st.markdown(f"• **Retrieval Mode:** `{msg.get('retrieval_mode', 'N/A')}`")
-                    st.markdown(f"• **Threshold Used:** `{msg.get('threshold', 0.0):.2f}`")
-                    st.markdown(f"• **Highest Similarity:** `{msg.get('highest_similarity', 0.0):.4f}`")
-                    st.markdown(f"• **Lowest Similarity:** `{msg.get('lowest_similarity', 0.0):.4f}`")
-                    st.markdown(f"• **Average Similarity:** `{msg.get('average_similarity', 0.0):.4f}`")
-                    st.markdown(f"• **Prompt Size:** `{msg.get('prompt_size_chars', 0)} chars`")
-                    st.markdown(f"• **Inference Latency:** `{msg.get('latency_metrics', {}).get('inference_time_ms', 0.0):.2f} ms`")
+                # Pipeline Details Explanations & Developer Mode diagnostics
+                if st.session_state.get("dev_mode", False):
+                    with st.expander("🔧 Developer Mode: LLM & Prompt Metrics", expanded=True):
+                        st.markdown(f"• **Detected Intent:** `{msg.get('intent', 'N/A')}`")
+                        st.markdown(f"• **Retrieval Mode:** `{msg.get('retrieval_mode', 'N/A')}`")
+                        st.markdown(f"• **Threshold Used:** `{msg.get('threshold', 0.0):.2f}`")
+                        st.markdown(f"• **Highest Similarity:** `{msg.get('highest_similarity', 0.0):.4f}`")
+                        st.markdown(f"• **Lowest Similarity:** `{msg.get('lowest_similarity', 0.0):.4f}`")
+                        st.markdown(f"• **Average Similarity:** `{msg.get('average_similarity', 0.0):.4f}`")
+                        
+                        diag = msg.get("diagnostics", {})
+                        st.markdown(f"• **Model:** `{diag.get('model', 'phi3:mini')}`")
+                        st.markdown(f"• **Prompt Length:** `{diag.get('prompt_length', 0)} chars`")
+                        st.markdown(f"• **Context Limit:** `{diag.get('context_limit', 0)} chars`")
+                        st.markdown(f"• **Request Time:** `{diag.get('request_time', 'N/A')}`")
+                        st.markdown(f"• **Inference Time:** `{diag.get('inference_time_ms', 0.0):.2f} ms`")
+                        st.markdown(f"• **HTTP Status:** `{diag.get('http_status', 'N/A')}`")
+                        st.markdown(f"• **Returned Characters:** `{diag.get('returned_characters', 0)} chars`")
+                        if diag.get("ollama_error"):
+                            st.markdown(f"• **Ollama Error:** `{diag.get('ollama_error')}`")
 
     # Chat input
     if prompt := st.chat_input("Ask a question about your documents..."):
@@ -730,8 +740,17 @@ with tab_chat:
                     st.markdown(f"• **Highest Similarity:** `{result.highest_similarity:.4f}`")
                     st.markdown(f"• **Lowest Similarity:** `{result.lowest_similarity:.4f}`")
                     st.markdown(f"• **Average Similarity:** `{result.average_similarity:.4f}`")
-                    st.markdown(f"• **Prompt Size:** `{len(prompt)} chars`")
-                    st.markdown(f"• **Inference Latency:** `{ans_res.latency_metrics.get('inference_time_ms', 0.0):.2f} ms`")
+                    
+                    diag = ans_res.diagnostics if hasattr(ans_res, "diagnostics") else {}
+                    st.markdown(f"• **Model:** `{diag.get('model', 'phi3:mini')}`")
+                    st.markdown(f"• **Prompt Length:** `{diag.get('prompt_length', 0)} chars`")
+                    st.markdown(f"• **Context Limit:** `{diag.get('context_limit', 0)} chars`")
+                    st.markdown(f"• **Request Time:** `{diag.get('request_time', 'N/A')}`")
+                    st.markdown(f"• **Inference Time:** `{diag.get('inference_time_ms', 0.0):.2f} ms`")
+                    st.markdown(f"• **HTTP Status:** `{diag.get('http_status', 'N/A')}`")
+                    st.markdown(f"• **Returned Characters:** `{diag.get('returned_characters', 0)} chars`")
+                    if diag.get("ollama_error"):
+                        st.markdown(f"• **Ollama Error:** `{diag.get('ollama_error')}`")
                     
         # Append assistant response to history
         st.session_state.chat_history.append({
@@ -747,6 +766,7 @@ with tab_chat:
             "prompt_size_chars": len(prompt),
             "latency_metrics": ans_res.latency_metrics,
             "token_statistics": ans_res.token_statistics,
+            "diagnostics": ans_res.diagnostics if hasattr(ans_res, "diagnostics") else {},
             "retrieved_chunks": [
                 {
                     "id": c.chunk_id,

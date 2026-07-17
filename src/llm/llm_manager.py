@@ -59,7 +59,18 @@ class LLMManager:
                 question_id=question_id,
                 timestamp=timestamp,
                 prompt_version=PROMPT_VERSION,
-                latency_metrics=latency_metrics
+                latency_metrics=latency_metrics,
+                diagnostics={
+                    "model": self.model_name,
+                    "prompt_length": 0,
+                    "context_length": 0,
+                    "context_limit": MAX_CONTEXT_CHARACTERS,
+                    "request_time": timestamp,
+                    "inference_time_ms": 0.0,
+                    "http_status": None,
+                    "returned_characters": 0,
+                    "ollama_error": "No relevant context found during retrieval."
+                }
             )
             
         # 2. Pre-Inference Service Check
@@ -75,7 +86,18 @@ class LLMManager:
                 question_id=question_id,
                 timestamp=timestamp,
                 prompt_version=PROMPT_VERSION,
-                latency_metrics={"total_response_latency_ms": (time.time() - start_total) * 1000.0}
+                latency_metrics={"total_response_latency_ms": (time.time() - start_total) * 1000.0},
+                diagnostics={
+                    "model": self.model_name,
+                    "prompt_length": 0,
+                    "context_length": 0,
+                    "context_limit": MAX_CONTEXT_CHARACTERS,
+                    "request_time": timestamp,
+                    "inference_time_ms": 0.0,
+                    "http_status": None,
+                    "returned_characters": 0,
+                    "ollama_error": "Ollama server is not running."
+                }
             )
             
         # 3. Model Registry Check
@@ -91,9 +113,20 @@ class LLMManager:
                 question_id=question_id,
                 timestamp=timestamp,
                 prompt_version=PROMPT_VERSION,
-                latency_metrics={"total_response_latency_ms": (time.time() - start_total) * 1000.0}
+                latency_metrics={"total_response_latency_ms": (time.time() - start_total) * 1000.0},
+                diagnostics={
+                    "model": self.model_name,
+                    "prompt_length": 0,
+                    "context_length": 0,
+                    "context_limit": MAX_CONTEXT_CHARACTERS,
+                    "request_time": timestamp,
+                    "inference_time_ms": 0.0,
+                    "http_status": None,
+                    "returned_characters": 0,
+                    "ollama_error": f"Model {self.model_name} is missing."
+                }
             )
-
+ 
         # 4. Prompt construction & context length check
         start_prompt = time.time()
         prompt, limited_context, chunks_used = PromptBuilder.build(
@@ -102,15 +135,42 @@ class LLMManager:
             max_context_chars=MAX_CONTEXT_CHARACTERS
         )
         prompt_time = (time.time() - start_prompt) * 1000.0
-
+ 
         # 5. Local Model Query Inference
+        diagnostics = {
+            "model": self.model_name,
+            "prompt_length": len(prompt),
+            "context_length": len(limited_context),
+            "context_limit": MAX_CONTEXT_CHARACTERS,
+            "request_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "inference_time_ms": 0.0,
+            "http_status": None,
+            "returned_characters": 0,
+            "ollama_error": None
+        }
+        
         try:
             start_inf = time.time()
-            raw_answer, token_stats = self.client.generate(self.model_name, prompt)
+            raw_answer, token_stats, client_diag = self.client.generate(self.model_name, prompt)
             inference_time = (time.time() - start_inf) * 1000.0
+            diagnostics.update(client_diag)
         except Exception as e:
+            inference_time = (time.time() - start_inf) * 1000.0
             msg = f"Model inference call failed: {str(e)}"
             logger.error(msg)
+            
+            ollama_error = str(e)
+            diagnostics["inference_time_ms"] = inference_time
+            diagnostics["ollama_error"] = ollama_error
+            
+            if "Ollama API" in ollama_error:
+                try:
+                    parts = ollama_error.split(" ")
+                    if len(parts) >= 3:
+                        diagnostics["http_status"] = int(parts[2].replace(":", ""))
+                except Exception:
+                    pass
+            
             return GroundedAnswer(
                 success=False,
                 reason="INFERENCE_ERROR",
@@ -120,9 +180,10 @@ class LLMManager:
                 question_id=question_id,
                 timestamp=timestamp,
                 prompt_version=PROMPT_VERSION,
-                latency_metrics={"total_response_latency_ms": (time.time() - start_total) * 1000.0}
+                latency_metrics={"total_response_latency_ms": (time.time() - start_total) * 1000.0},
+                diagnostics=diagnostics
             )
-
+ 
         # 6. Response Quality & Entity Validation
         is_valid = ResponseValidator.validate(raw_answer, limited_context, retrieval_result.query)
         if not is_valid:
@@ -134,6 +195,7 @@ class LLMManager:
                 "formatting_time_ms": 0.0,
                 "total_response_latency_ms": (time.time() - start_total) * 1000.0
             }
+            diagnostics["ollama_error"] = "Grounded response validation failed (hallucinated entity or empty output)."
             return GroundedAnswer(
                 success=False,
                 reason="VALIDATION_FAILED",
@@ -143,9 +205,10 @@ class LLMManager:
                 question_id=question_id,
                 timestamp=timestamp,
                 prompt_version=PROMPT_VERSION,
-                latency_metrics=latency_metrics
+                latency_metrics=latency_metrics,
+                diagnostics=diagnostics
             )
-
+ 
         # 7. Citations & Formatting
         start_fmt = time.time()
         citations_md, sources_list = CitationFormatter.format(retrieval_result.retrieved_chunks[:chunks_used])
@@ -172,5 +235,6 @@ class LLMManager:
             prompt_version=PROMPT_VERSION,
             is_low_confidence=retrieval_result.is_low_confidence,
             latency_metrics=latency_metrics,
-            token_statistics=token_stats
+            token_statistics=token_stats,
+            diagnostics=diagnostics
         )

@@ -30,7 +30,16 @@ class MockOllamaClient:
         return self.model_installed
         
     def generate(self, model_name, prompt):
-        return self.response_text, {"prompt_eval_count": 25, "eval_count": 50}
+        return self.response_text, {"prompt_eval_count": 25, "eval_count": 50}, {
+            "model": model_name,
+            "prompt_length": len(prompt),
+            "context_limit": 4000,
+            "request_time": "2026-07-17T15:00:00Z",
+            "inference_time_ms": 10.0,
+            "http_status": 200,
+            "returned_characters": len(self.response_text),
+            "ollama_error": None
+        }
 
 def test_grounded_answer_success():
     logger.info("=== Testing Grounded Answer (English) ===")

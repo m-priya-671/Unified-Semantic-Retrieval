@@ -16,3 +16,4 @@ class GroundedAnswer:
     is_low_confidence: bool = False
     latency_metrics: Dict[str, float] = field(default_factory=dict)
     token_statistics: Dict[str, int] = field(default_factory=dict)
+    diagnostics: Dict[str, Any] = field(default_factory=dict)
