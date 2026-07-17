@@ -680,6 +680,10 @@ with tab_chat:
     # Render chat bubbles
     for chat_idx, msg in enumerate(st.session_state.chat_history):
         with st.chat_message(msg["role"]):
+            if msg["role"] == "assistant":
+                diag = msg.get("diagnostics", {})
+                if diag.get("cpu_fallback_triggered", False):
+                    st.info("ℹ️ GPU memory was insufficient. Inference completed using CPU mode.")
             st.markdown(msg["content"])
             
             # If assistant message has chunks, render cards
@@ -725,8 +729,10 @@ with tab_chat:
                         st.markdown(f"• **Prompt Length:** `{diag.get('prompt_length', 0)} chars`")
                         st.markdown(f"• **HTTP Status:** `{diag.get('http_status', 'N/A')}`")
                         st.markdown(f"• **Inference Time:** `{diag.get('inference_time_ms', 0.0):.2f} ms`")
-                        st.markdown(f"• **GPU OOM Detected:** `{diag.get('gpu_oom_detected', 'No')}`")
                         st.markdown(f"• **Retry Performed:** `{diag.get('retry_performed', 'No')}`")
+                        st.markdown(f"• **Retry Reason:** `{diag.get('retry_reason', 'None')}`")
+                        st.markdown(f"• **GPU OOM Detected:** `{diag.get('gpu_oom_detected', 'No')}`")
+                        st.markdown(f"• **Final Runtime Used:** `{diag.get('final_runtime_used', 'N/A')}`")
                         st.markdown(f"• **Final Runtime Mode:** `{diag.get('final_runtime_mode', 'N/A')}`")
                         
                         rec = get_hardware_recommendation()
@@ -791,6 +797,9 @@ with tab_chat:
         with st.chat_message("assistant"):
             if result.is_low_confidence:
                 st.warning("⚠️ Low confidence retrieval. Answer may be less reliable.")
+            diag = ans_res.diagnostics if hasattr(ans_res, "diagnostics") else {}
+            if diag.get("cpu_fallback_triggered", False):
+                st.info("ℹ️ GPU memory was insufficient. Inference completed using CPU mode.")
             st.markdown(ans_res.answer)
             
             # Copy Code box
@@ -825,7 +834,6 @@ with tab_chat:
                     st.markdown(f"• **Lowest Similarity:** `{result.lowest_similarity:.4f}`")
                     st.markdown(f"• **Average Similarity:** `{result.average_similarity:.4f}`")
                     
-                    diag = ans_res.diagnostics if hasattr(ans_res, "diagnostics") else {}
                     st.markdown(f"• **Runtime Mode:** `{diag.get('runtime_mode', 'N/A')}`")
                     st.markdown(f"• **Runtime Profile:** `{diag.get('runtime_profile', 'N/A')}`")
                     st.markdown(f"• **Model Name:** `{diag.get('model', 'N/A')}`")
@@ -834,8 +842,10 @@ with tab_chat:
                     st.markdown(f"• **Prompt Length:** `{diag.get('prompt_length', 0)} chars`")
                     st.markdown(f"• **HTTP Status:** `{diag.get('http_status', 'N/A')}`")
                     st.markdown(f"• **Inference Time:** `{diag.get('inference_time_ms', 0.0):.2f} ms`")
-                    st.markdown(f"• **GPU OOM Detected:** `{diag.get('gpu_oom_detected', 'No')}`")
                     st.markdown(f"• **Retry Performed:** `{diag.get('retry_performed', 'No')}`")
+                    st.markdown(f"• **Retry Reason:** `{diag.get('retry_reason', 'None')}`")
+                    st.markdown(f"• **GPU OOM Detected:** `{diag.get('gpu_oom_detected', 'No')}`")
+                    st.markdown(f"• **Final Runtime Used:** `{diag.get('final_runtime_used', 'N/A')}`")
                     st.markdown(f"• **Final Runtime Mode:** `{diag.get('final_runtime_mode', 'N/A')}`")
                     
                     rec = get_hardware_recommendation()

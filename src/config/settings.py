@@ -65,6 +65,7 @@ MAX_CONTEXT_CHARACTERS = 4000
 # Ollama Runtime Settings
 LLM_RUNTIME_MODE = "auto"  # "auto", "gpu", "cpu"
 LLM_RUNTIME_PROFILE = "BALANCED"  # "LOW_MEMORY", "BALANCED", "QUALITY"
+AUTO_CPU_FALLBACK = False
 
 OLLAMA_PROFILES = {
     "LOW_MEMORY": {

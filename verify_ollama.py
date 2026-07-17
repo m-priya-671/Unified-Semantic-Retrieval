@@ -219,5 +219,84 @@ class TestOllamaClient(unittest.TestCase):
         self.assertIn("GPU does not have enough available memory", str(ctx.exception))
         self.assertIn("Switch to CPU mode", str(ctx.exception))
 
+    def test_all_profiles_exist(self):
+        # Verify LOW_MEMORY, BALANCED, and QUALITY profiles exist and have correct fields
+        self.assertIn("LOW_MEMORY", OLLAMA_PROFILES)
+        self.assertIn("BALANCED", OLLAMA_PROFILES)
+        self.assertIn("QUALITY", OLLAMA_PROFILES)
+        
+        self.assertEqual(OLLAMA_PROFILES["LOW_MEMORY"]["num_ctx"], 512)
+        self.assertEqual(OLLAMA_PROFILES["LOW_MEMORY"]["num_predict"], 200)
+        self.assertEqual(OLLAMA_PROFILES["BALANCED"]["num_ctx"], 1024)
+        self.assertEqual(OLLAMA_PROFILES["BALANCED"]["num_predict"], 300)
+        self.assertEqual(OLLAMA_PROFILES["QUALITY"]["num_ctx"], 2048)
+        self.assertEqual(OLLAMA_PROFILES["QUALITY"]["num_predict"], 500)
+
+    @patch("requests.post")
+    @patch("src.config.settings.AUTO_CPU_FALLBACK", True)
+    def test_cpu_fallback_success(self, mock_post):
+        # 1st fail: GPU VRAM OOM
+        mock_fail1 = MagicMock()
+        mock_fail1.status_code = 500
+        mock_fail1.json.return_value = {"error": "cudaMalloc failed: out of memory"}
+        
+        # 2nd fail: GPU LOW_MEMORY VRAM OOM
+        mock_fail2 = MagicMock()
+        mock_fail2.status_code = 500
+        mock_fail2.json.return_value = {"error": "failed to allocate buffer for kv cache"}
+        
+        # 3rd success: CPU LOW_MEMORY success
+        mock_success = MagicMock()
+        mock_success.status_code = 200
+        mock_success.json.return_value = {"response": "CPU fallback response answer"}
+        
+        mock_post.side_effect = [mock_fail1, mock_fail2, mock_success]
+        
+        answer, stats, diag = self.client.generate("phi3:mini", "CPU fallback search query")
+        self.assertEqual(answer, "CPU fallback response answer")
+        self.assertEqual(diag["cpu_fallback_triggered"], True)
+        self.assertEqual(diag["final_runtime_used"], "CPU")
+        self.assertEqual(diag["gpu_oom_detected"], "Yes")
+        self.assertEqual(diag["retry_performed"], "Yes")
+        self.assertEqual(diag["retry_reason"], "GPU OOM detected, fallback to CPU")
+
+    def test_runtime_diagnostics_logging(self):
+        # Check that runtime log file exists or gets created
+        from src.config.settings import LOGS_DIR
+        import os
+        import json
+        log_file = os.path.join(LOGS_DIR, "ollama_runtime.jsonl")
+        
+        # Remove if exists to check clean creation
+        if os.path.exists(log_file):
+            try:
+                os.remove(log_file)
+            except Exception:
+                pass
+                
+        # Simulate writing a log
+        test_diag = {
+            "request_time": "2026-07-17T22:15:00Z",
+            "runtime_mode": "auto",
+            "runtime_profile": "BALANCED",
+            "context_limit": 1024,
+            "num_predict": 300,
+            "inference_time_ms": 150.0,
+            "retry_performed": "Yes",
+            "retry_reason": "GPU OOM detected",
+            "http_status": 200
+        }
+        
+        from src.llm.ollama_client import write_runtime_log
+        write_runtime_log(test_diag, success=True)
+        
+        self.assertTrue(os.path.exists(log_file))
+        with open(log_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        self.assertEqual(len(lines), 1)
+        record = json.loads(lines[0])
+        self.assertEqual(record["timestamp"], "2026-07-17T22:15:00Z")
+        self.assertEqual(record["success"], True)
+
 if __name__ == "__main__":
     unittest.main()

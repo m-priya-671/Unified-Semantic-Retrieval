@@ -177,7 +177,10 @@ class LLMManager:
             "ollama_error": None,
             "gpu_oom_detected": "No",
             "retry_performed": "No",
-            "final_runtime_mode": "CPU" if LLM_RUNTIME_MODE == "cpu" else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
+            "retry_reason": None,
+            "final_runtime_mode": "CPU" if LLM_RUNTIME_MODE == "cpu" else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto"),
+            "final_runtime_used": "CPU" if LLM_RUNTIME_MODE == "cpu" else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto"),
+            "cpu_fallback_triggered": False
         }
         
         try:
@@ -187,12 +190,15 @@ class LLMManager:
             diagnostics.update(client_diag)
         except Exception as e:
             inference_time = (time.time() - start_inf) * 1000.0
-            msg = f"Model inference call failed: {str(e)}"
-            logger.error(msg)
+            msg = str(e)
+            logger.error(f"Model inference call failed: {msg}")
             
             ollama_error = str(e)
             diagnostics["inference_time_ms"] = inference_time
             diagnostics["ollama_error"] = ollama_error
+            
+            if hasattr(e, "diagnostics") and isinstance(e.diagnostics, dict):
+                diagnostics.update(e.diagnostics)
             
             if "Ollama API" in ollama_error:
                 try:

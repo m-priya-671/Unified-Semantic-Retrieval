@@ -1,6 +1,29 @@
 import requests
+import json
+import os
 from typing import Dict, Any, Tuple
 from src.utils.logger import logger
+
+def write_runtime_log(diagnostics: Dict[str, Any], success: bool):
+    try:
+        from src.config.settings import LOGS_DIR
+        log_file = os.path.join(LOGS_DIR, "ollama_runtime.jsonl")
+        record = {
+            "timestamp": diagnostics.get("request_time"),
+            "runtime_mode": diagnostics.get("runtime_mode"),
+            "runtime_profile": diagnostics.get("runtime_profile"),
+            "num_ctx": diagnostics.get("context_limit"),
+            "num_predict": diagnostics.get("num_predict"),
+            "latency": diagnostics.get("inference_time_ms"),
+            "retry": diagnostics.get("retry_performed"),
+            "retry_reason": diagnostics.get("retry_reason"),
+            "HTTP_status": diagnostics.get("http_status"),
+            "success": success
+        }
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to write to ollama_runtime.jsonl: {str(e)}")
 
 class OllamaClient:
     """Interfaces with local offline Ollama API endpoints for model state validation and generation."""
@@ -55,7 +78,7 @@ class OllamaClient:
             return False
 
     def generate(self, model_name: str, prompt: str) -> Tuple[str, Dict[str, int], Dict[str, Any]]:
-        """Sends a prompt to Ollama generation endpoint with validations, profile loading, and GPU fallback retries.
+        """Sends a prompt to Ollama generation endpoint with validations, profile loading, and GPU/CPU fallback retries.
         
         Args:
             model_name: Target model tag.
@@ -69,7 +92,8 @@ class OllamaClient:
             LLM_RUNTIME_MODE, 
             LLM_RUNTIME_PROFILE, 
             OLLAMA_OPTIONS, 
-            OLLAMA_PROFILES
+            OLLAMA_PROFILES,
+            AUTO_CPU_FALLBACK
         )
         import time
         
@@ -119,8 +143,16 @@ class OllamaClient:
             "ollama_error": None,
             "gpu_oom_detected": "No",
             "retry_performed": "No",
-            "final_runtime_mode": "CPU" if options.get("num_gpu", -1) == 0 else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
+            "retry_reason": None,
+            "final_runtime_mode": "CPU" if options.get("num_gpu", -1) == 0 else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto"),
+            "final_runtime_used": "CPU" if options.get("num_gpu", -1) == 0 else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto"),
+            "cpu_fallback_triggered": False
         }
+
+        def raise_runtime_error(msg: str):
+            exc = RuntimeError(msg)
+            exc.diagnostics = diagnostics
+            raise exc
 
         def is_oom_error(err_msg: str) -> bool:
             oom_indicators = [
@@ -166,7 +198,8 @@ class OllamaClient:
             logger.error(f"- HTTP status: Connection Error")
             logger.error(f"- Total request time: {elapsed_time_ms:.2f} ms")
             logger.error(f"- Ollama error body: {conn_err}")
-            raise RuntimeError(f"Ollama API Connection Error: {conn_err}")
+            write_runtime_log(diagnostics, success=False)
+            raise_runtime_error(f"Ollama API Connection Error: {conn_err}")
 
         diagnostics["http_status"] = response.status_code
         logger.info("Ollama Response Diagnostics:")
@@ -181,11 +214,12 @@ class OllamaClient:
             except Exception:
                 error_msg = response.text
 
-        # 4. Smart OOM Detection & Single Retry with LOW_MEMORY
+        # 4. Smart OOM Detection & GPU/CPU Fallback Retry Loop
         if error_msg and is_oom_error(error_msg):
             logger.warning(f"Ollama GPU OOM detected: '{error_msg}'. Retrying once using LOW_MEMORY profile...")
             diagnostics["gpu_oom_detected"] = "Yes"
             diagnostics["retry_performed"] = "Yes"
+            diagnostics["retry_reason"] = "GPU OOM detected"
             
             low_options = OLLAMA_OPTIONS.copy()
             low_options.update(OLLAMA_PROFILES["LOW_MEMORY"])
@@ -197,14 +231,16 @@ class OllamaClient:
             diagnostics["num_predict"] = low_options.get("num_predict", 200)
             diagnostics["runtime_profile"] = "LOW_MEMORY"
             diagnostics["final_runtime_mode"] = "CPU" if low_options.get("num_gpu", -1) == 0 else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
+            diagnostics["final_runtime_used"] = "CPU" if low_options.get("num_gpu", -1) == 0 else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
             
-            # Second attempt (low context profile)
+            # Second attempt (GPU low context profile retry)
             response, elapsed_time_ms, conn_err = make_request(payload)
             diagnostics["inference_time_ms"] += elapsed_time_ms
             
             if conn_err:
                 diagnostics["ollama_error"] = conn_err
-                raise RuntimeError(f"Ollama API Connection Error on Retry: {conn_err}")
+                write_runtime_log(diagnostics, success=False)
+                raise_runtime_error(f"Ollama API Connection Error on Retry: {conn_err}")
                 
             diagnostics["http_status"] = response.status_code
             
@@ -215,26 +251,85 @@ class OllamaClient:
                 except Exception:
                     error_msg = response.text
             
-            if error_msg:
+            # 4b. GPU Low Memory retry failed, check if AUTO_CPU_FALLBACK is enabled
+            if error_msg and is_oom_error(error_msg):
+                if AUTO_CPU_FALLBACK:
+                    logger.warning("LOW_MEMORY profile retry failed with VRAM OOM. Falling back to CPU mode...")
+                    diagnostics["retry_reason"] = "GPU OOM detected, fallback to CPU"
+                    
+                    cpu_options = OLLAMA_OPTIONS.copy()
+                    cpu_options.update(OLLAMA_PROFILES["LOW_MEMORY"])
+                    cpu_options["num_gpu"] = 0  # Force CPU Mode
+                    
+                    payload["options"] = cpu_options
+                    diagnostics["final_runtime_mode"] = "CPU"
+                    diagnostics["final_runtime_used"] = "CPU"
+                    
+                    # Third attempt (CPU mode execution fallback)
+                    response, elapsed_time_ms, conn_err = make_request(payload)
+                    diagnostics["inference_time_ms"] += elapsed_time_ms
+                    
+                    if conn_err:
+                        diagnostics["ollama_error"] = conn_err
+                        write_runtime_log(diagnostics, success=False)
+                        raise_runtime_error(f"Ollama API Connection Error on CPU Fallback: {conn_err}")
+                        
+                    diagnostics["http_status"] = response.status_code
+                    
+                    error_msg = None
+                    if response.status_code != 200:
+                        try:
+                            error_msg = response.json().get("error", response.text)
+                        except Exception:
+                            error_msg = response.text
+                            
+                    if error_msg:
+                        # CPU mode failed as well
+                        diagnostics["ollama_error"] = error_msg
+                        write_runtime_log(diagnostics, success=False)
+                        raise_runtime_error(
+                            "Model inference failed because the GPU does not have enough available memory.\n\n"
+                            "Suggestions:\n"
+                            "• Close GPU-intensive applications.\n"
+                            "• Restart Ollama.\n"
+                            "• Use the Low Memory runtime profile.\n"
+                            "• Switch to CPU mode.\n"
+                            "• Reduce context size."
+                        )
+                    else:
+                        # CPU succeeded!
+                        diagnostics["cpu_fallback_triggered"] = True
+                        diagnostics["context_limit"] = cpu_options.get("num_ctx", 512)
+                        diagnostics["num_predict"] = cpu_options.get("num_predict", 200)
+                        diagnostics["runtime_profile"] = "LOW_MEMORY"
+                else:
+                    # CPU Fallback disabled, raise suggestions warning
+                    diagnostics["ollama_error"] = error_msg
+                    write_runtime_log(diagnostics, success=False)
+                    raise_runtime_error(
+                        "Model inference failed because the GPU does not have enough available memory.\n\n"
+                        "Suggestions:\n"
+                        "• Close GPU-intensive applications.\n"
+                        "• Restart Ollama.\n"
+                        "• Use the Low Memory runtime profile.\n"
+                        "• Switch to CPU mode.\n"
+                        "• Reduce context size."
+                    )
+            elif error_msg:
+                # GPU Low Memory failed with non-OOM error
                 diagnostics["ollama_error"] = error_msg
-                logger.error(f"- Returned response size: N/A")
-                logger.error(f"- Ollama error body (Retry Failed): {error_msg}")
-                # Raise custom structured RuntimeError with suggestions
-                raise RuntimeError(
-                    "Model inference failed because the GPU does not have enough available memory.\n\n"
-                    "Suggestions:\n"
-                    "• Close GPU-intensive applications.\n"
-                    "• Restart Ollama.\n"
-                    "• Use the Low Memory runtime profile.\n"
-                    "• Switch to CPU mode.\n"
-                    "• Reduce context size."
-                )
+                write_runtime_log(diagnostics, success=False)
+                raise_runtime_error(f"Ollama API {response.status_code}: {error_msg}")
+            else:
+                # GPU Low Memory succeeded!
+                diagnostics["context_limit"] = low_options.get("num_ctx", 512)
+                diagnostics["num_predict"] = low_options.get("num_predict", 200)
+                diagnostics["runtime_profile"] = "LOW_MEMORY"
         elif error_msg:
-            # Failed first attempt with non-OOM error
+            # First attempt failed with non-OOM error
             diagnostics["ollama_error"] = error_msg
-            logger.error(f"- Returned response size: N/A")
-            logger.error(f"- Ollama error body: {error_msg}")
-            raise RuntimeError(f"Ollama API {response.status_code}: {error_msg}")
+            write_runtime_log(diagnostics, success=False)
+            raise_runtime_error(f"Ollama API {response.status_code}: {error_msg}")
 
         # 5. Successful Execution Payload Processing
         data = response.json()
@@ -249,4 +344,6 @@ class OllamaClient:
             "eval_count": data.get("eval_count", 0)
         }
         
+        # Log successful run
+        write_runtime_log(diagnostics, success=True)
         return answer, stats, diagnostics
