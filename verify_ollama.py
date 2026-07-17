@@ -13,7 +13,13 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from src.llm.ollama_client import OllamaClient
-from src.config.settings import MAX_CONTEXT_CHARACTERS
+from src.config.settings import (
+    MAX_CONTEXT_CHARACTERS, 
+    LLM_RUNTIME_MODE, 
+    LLM_RUNTIME_PROFILE, 
+    OLLAMA_OPTIONS, 
+    OLLAMA_PROFILES
+)
 
 class TestOllamaClient(unittest.TestCase):
     
@@ -125,7 +131,7 @@ class TestOllamaClient(unittest.TestCase):
         # Simulate connection/read timeout
         mock_post.side_effect = requests.exceptions.Timeout("Request timed out after 180s")
         
-        with self.assertRaises(requests.exceptions.Timeout):
+        with self.assertRaises(RuntimeError):
             self.client.generate("phi3:mini", "Trigger timeout query")
             
     @patch("requests.post")
@@ -134,14 +140,14 @@ class TestOllamaClient(unittest.TestCase):
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.json.return_value = {
-            "error": "Out of memory running model inference."
+            "error": "Generic database failure or network exception."
         }
         mock_post.return_value = mock_response
         
         with self.assertRaises(RuntimeError) as ctx:
             self.client.generate("phi3:mini", "Trigger server error")
             
-        self.assertIn("Ollama API 500: Out of memory", str(ctx.exception))
+        self.assertIn("Ollama API 500: Generic database failure", str(ctx.exception))
         
         # Simulate HTTP 404 error with plain text error payload
         mock_response_txt = MagicMock()
@@ -154,6 +160,64 @@ class TestOllamaClient(unittest.TestCase):
             self.client.generate("phi3:mini", "Trigger 404")
             
         self.assertIn("Ollama API 404: Model not found", str(ctx2.exception))
+
+    def test_runtime_profile_loading(self):
+        # Verify default settings configs
+        self.assertIn(LLM_RUNTIME_PROFILE, OLLAMA_PROFILES)
+        self.assertEqual(OLLAMA_OPTIONS["num_ctx"], OLLAMA_PROFILES[LLM_RUNTIME_PROFILE]["num_ctx"])
+        self.assertEqual(OLLAMA_OPTIONS["num_predict"], OLLAMA_PROFILES[LLM_RUNTIME_PROFILE]["num_predict"])
+
+    @patch("requests.post")
+    @patch("src.config.settings.LLM_RUNTIME_MODE", "cpu")
+    def test_cpu_mode_override(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"response": "CPU result"}
+        mock_post.return_value = mock_response
+        
+        answer, stats, diag = self.client.generate("phi3:mini", "Test query")
+        # Assert post was called with options having num_gpu=0
+        called_args, called_kwargs = mock_post.call_args
+        self.assertEqual(called_kwargs["json"]["options"]["num_gpu"], 0)
+
+    @patch("requests.post")
+    def test_gpu_oom_detection_and_retry(self, mock_post):
+        # Setup first attempt failing with OOM, second succeeding
+        mock_fail = MagicMock()
+        mock_fail.status_code = 500
+        mock_fail.json.return_value = {"error": "cudaMalloc failed: out of memory during initialization"}
+        
+        mock_success = MagicMock()
+        mock_success.status_code = 200
+        mock_success.json.return_value = {"response": "Recovered response"}
+        
+        mock_post.side_effect = [mock_fail, mock_success]
+        
+        answer, stats, diag = self.client.generate("phi3:mini", "OOM recovery query")
+        self.assertEqual(answer, "Recovered response")
+        self.assertEqual(diag["gpu_oom_detected"], "Yes")
+        self.assertEqual(diag["retry_performed"], "Yes")
+        self.assertEqual(diag["runtime_profile"], "LOW_MEMORY")
+        self.assertEqual(diag["context_limit"], 512)
+
+    @patch("requests.post")
+    def test_gpu_oom_double_failure_friendly_message(self, mock_post):
+        # Setup first attempt failing with OOM, second retry also failing with OOM
+        mock_fail1 = MagicMock()
+        mock_fail1.status_code = 500
+        mock_fail1.json.return_value = {"error": "failed to allocate buffer for kv cache"}
+        
+        mock_fail2 = MagicMock()
+        mock_fail2.status_code = 500
+        mock_fail2.json.return_value = {"error": "cudaMalloc failed: out of memory"}
+        
+        mock_post.side_effect = [mock_fail1, mock_fail2]
+        
+        with self.assertRaises(RuntimeError) as ctx:
+            self.client.generate("phi3:mini", "Double OOM trigger query")
+            
+        self.assertIn("GPU does not have enough available memory", str(ctx.exception))
+        self.assertIn("Switch to CPU mode", str(ctx.exception))
 
 if __name__ == "__main__":
     unittest.main()

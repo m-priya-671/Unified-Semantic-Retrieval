@@ -132,7 +132,69 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 3. Initialize Session State
+# Helper to detect GPU hardware recommendation
+def get_hardware_recommendation() -> str:
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True
+        )
+        total_mem = int(res.stdout.strip().split("\n")[0])
+        if total_mem <= 4608:
+            return f"LOW_MEMORY profile (Detected GPU has {total_mem} MiB VRAM)"
+        else:
+            return f"Balanced / Quality profile (Detected GPU has {total_mem} MiB VRAM)"
+    except Exception:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                device_id = torch.cuda.current_device()
+                total_mem = torch.cuda.get_device_properties(device_id).total_memory / (1024 * 1024)
+                if total_mem <= 4600:
+                    return f"LOW_MEMORY profile (Detected GPU has {total_mem:.0f} MB VRAM)"
+                else:
+                    return f"Balanced / Quality profile (Detected GPU has {total_mem:.0f} MB VRAM)"
+        except Exception:
+            pass
+    return "Balanced profile (Recommended)"
+
+# 3. Startup Validation
+if "startup_validated" not in st.session_state:
+    st.session_state.startup_warnings = []
+    try:
+        from src.llm import LLMManager
+        llm_manager = LLMManager()
+        if not llm_manager.client.is_server_running():
+            st.session_state.startup_warnings.append(
+                "Ollama server is not running or unreachable on http://localhost:11434. Please start Ollama before searching."
+            )
+        else:
+            if not llm_manager.client.is_model_installed(llm_manager.model_name):
+                st.session_state.startup_warnings.append(
+                    f"Model '{llm_manager.model_name}' was not found in your local Ollama registry. Please run `ollama pull {llm_manager.model_name}` first."
+                )
+        from src.config.settings import LLM_RUNTIME_MODE, LLM_RUNTIME_PROFILE, OLLAMA_OPTIONS
+        if LLM_RUNTIME_MODE not in ["auto", "gpu", "cpu"]:
+            st.session_state.startup_warnings.append(
+                f"Invalid LLM_RUNTIME_MODE: '{LLM_RUNTIME_MODE}'. Supported values are 'auto', 'gpu', or 'cpu'."
+            )
+        if LLM_RUNTIME_PROFILE not in ["LOW_MEMORY", "BALANCED", "QUALITY"]:
+            st.session_state.startup_warnings.append(
+                f"Invalid LLM_RUNTIME_PROFILE: '{LLM_RUNTIME_PROFILE}'. Supported values are 'LOW_MEMORY', 'BALANCED', or 'QUALITY'."
+            )
+        if not isinstance(OLLAMA_OPTIONS, dict) or "num_ctx" not in OLLAMA_OPTIONS:
+            st.session_state.startup_warnings.append(
+                "Invalid OLLAMA_OPTIONS configuration dictionary in settings.py."
+            )
+    except Exception as startup_err:
+        st.session_state.startup_warnings.append(f"Startup validation failed: {str(startup_err)}")
+    st.session_state.startup_validated = True
+
+# 3.5 Initialize Session State
 if "parsed_files" not in st.session_state:
     st.session_state.parsed_files = {}
 
@@ -329,9 +391,16 @@ with st.sidebar:
     # Section 4: AI Pipeline
     st.markdown("### 🧠 AI Pipeline")
     from src.llm import LLMManager
+    from src.config.settings import LLM_RUNTIME_MODE, LLM_RUNTIME_PROFILE
     llm_manager = LLMManager()
     ollama_running = llm_manager.client.is_server_running()
-    ollama_status = "Connected 🟢" if ollama_running else "Disconnected 🔴"
+    if ollama_running:
+        if LLM_RUNTIME_MODE == "cpu":
+            ollama_status = "Connected (CPU Mode) 🟡"
+        else:
+            ollama_status = "Connected 🟢"
+    else:
+        ollama_status = "Disconnected 🔴"
     
     st.markdown(f"• **Embedding Model:** `MiniLM-L12-v2` 🟢")
     st.markdown(f"• **Embedding Dimension:** `384` 📏")
@@ -340,6 +409,8 @@ with st.sidebar:
     st.markdown(f"• **Indexed Vectors:** `{idx_manager.engine.total}` 🗂️")
     st.markdown(f"• **LLM Model:** `{llm_manager.model_name}` 🤖")
     st.markdown(f"• **Ollama Status:** `{ollama_status}`")
+    st.markdown(f"• **Runtime Mode Configured:** `{LLM_RUNTIME_MODE.upper()}`")
+    st.markdown(f"• **Runtime Profile Configured:** `{LLM_RUNTIME_PROFILE}`")
     st.markdown(f"• **Retrieval Status:** `Active 🟢`")
     
     st.markdown("---")
@@ -362,6 +433,11 @@ with st.sidebar:
 # 5. Header Title Banner
 st.markdown("<div class='banner-title'>Offline Multimodal RAG System</div>", unsafe_allow_html=True)
 st.markdown("<div class='banner-subtitle'>English • Tamil • AI-Powered Local Knowledge Assistant</div>", unsafe_allow_html=True)
+
+# 5.5 Startup Warnings Display
+if st.session_state.get("startup_warnings"):
+    for warning in st.session_state.startup_warnings:
+        st.warning(f"⚠️ {warning}")
 
 # 6. Global Latencies Cache
 if "retrieval_latencies" not in st.session_state:
@@ -641,13 +717,21 @@ with tab_chat:
                         st.markdown(f"• **Average Similarity:** `{msg.get('average_similarity', 0.0):.4f}`")
                         
                         diag = msg.get("diagnostics", {})
-                        st.markdown(f"• **Model:** `{diag.get('model', 'phi3:mini')}`")
+                        st.markdown(f"• **Runtime Mode:** `{diag.get('runtime_mode', 'N/A')}`")
+                        st.markdown(f"• **Runtime Profile:** `{diag.get('runtime_profile', 'N/A')}`")
+                        st.markdown(f"• **Model Name:** `{diag.get('model', 'N/A')}`")
+                        st.markdown(f"• **num_ctx:** `{diag.get('context_limit', 'N/A')}`")
+                        st.markdown(f"• **num_predict:** `{diag.get('num_predict', 'N/A')}`")
                         st.markdown(f"• **Prompt Length:** `{diag.get('prompt_length', 0)} chars`")
-                        st.markdown(f"• **Context Limit:** `{diag.get('context_limit', 0)} chars`")
-                        st.markdown(f"• **Request Time:** `{diag.get('request_time', 'N/A')}`")
-                        st.markdown(f"• **Inference Time:** `{diag.get('inference_time_ms', 0.0):.2f} ms`")
                         st.markdown(f"• **HTTP Status:** `{diag.get('http_status', 'N/A')}`")
-                        st.markdown(f"• **Returned Characters:** `{diag.get('returned_characters', 0)} chars`")
+                        st.markdown(f"• **Inference Time:** `{diag.get('inference_time_ms', 0.0):.2f} ms`")
+                        st.markdown(f"• **GPU OOM Detected:** `{diag.get('gpu_oom_detected', 'No')}`")
+                        st.markdown(f"• **Retry Performed:** `{diag.get('retry_performed', 'No')}`")
+                        st.markdown(f"• **Final Runtime Mode:** `{diag.get('final_runtime_mode', 'N/A')}`")
+                        
+                        rec = get_hardware_recommendation()
+                        st.markdown(f"• **Hardware Recommendation:** `{rec}`")
+                        
                         if diag.get("ollama_error"):
                             st.markdown(f"• **Ollama Error:** `{diag.get('ollama_error')}`")
 
@@ -742,13 +826,21 @@ with tab_chat:
                     st.markdown(f"• **Average Similarity:** `{result.average_similarity:.4f}`")
                     
                     diag = ans_res.diagnostics if hasattr(ans_res, "diagnostics") else {}
-                    st.markdown(f"• **Model:** `{diag.get('model', 'phi3:mini')}`")
+                    st.markdown(f"• **Runtime Mode:** `{diag.get('runtime_mode', 'N/A')}`")
+                    st.markdown(f"• **Runtime Profile:** `{diag.get('runtime_profile', 'N/A')}`")
+                    st.markdown(f"• **Model Name:** `{diag.get('model', 'N/A')}`")
+                    st.markdown(f"• **num_ctx:** `{diag.get('context_limit', 'N/A')}`")
+                    st.markdown(f"• **num_predict:** `{diag.get('num_predict', 'N/A')}`")
                     st.markdown(f"• **Prompt Length:** `{diag.get('prompt_length', 0)} chars`")
-                    st.markdown(f"• **Context Limit:** `{diag.get('context_limit', 0)} chars`")
-                    st.markdown(f"• **Request Time:** `{diag.get('request_time', 'N/A')}`")
-                    st.markdown(f"• **Inference Time:** `{diag.get('inference_time_ms', 0.0):.2f} ms`")
                     st.markdown(f"• **HTTP Status:** `{diag.get('http_status', 'N/A')}`")
-                    st.markdown(f"• **Returned Characters:** `{diag.get('returned_characters', 0)} chars`")
+                    st.markdown(f"• **Inference Time:** `{diag.get('inference_time_ms', 0.0):.2f} ms`")
+                    st.markdown(f"• **GPU OOM Detected:** `{diag.get('gpu_oom_detected', 'No')}`")
+                    st.markdown(f"• **Retry Performed:** `{diag.get('retry_performed', 'No')}`")
+                    st.markdown(f"• **Final Runtime Mode:** `{diag.get('final_runtime_mode', 'N/A')}`")
+                    
+                    rec = get_hardware_recommendation()
+                    st.markdown(f"• **Hardware Recommendation:** `{rec}`")
+                    
                     if diag.get("ollama_error"):
                         st.markdown(f"• **Ollama Error:** `{diag.get('ollama_error')}`")
                     

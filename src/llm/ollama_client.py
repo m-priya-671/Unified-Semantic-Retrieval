@@ -55,7 +55,7 @@ class OllamaClient:
             return False
 
     def generate(self, model_name: str, prompt: str) -> Tuple[str, Dict[str, int], Dict[str, Any]]:
-        """Sends a prompt to Ollama generation endpoint with validations and diagnostics.
+        """Sends a prompt to Ollama generation endpoint with validations, profile loading, and GPU fallback retries.
         
         Args:
             model_name: Target model tag.
@@ -64,7 +64,13 @@ class OllamaClient:
         Returns:
             A tuple of (generated_response_text, token_statistics_dictionary, diagnostics_dictionary)
         """
-        from src.config.settings import MAX_CONTEXT_CHARACTERS
+        from src.config.settings import (
+            MAX_CONTEXT_CHARACTERS, 
+            LLM_RUNTIME_MODE, 
+            LLM_RUNTIME_PROFILE, 
+            OLLAMA_OPTIONS, 
+            OLLAMA_PROFILES
+        )
         import time
         
         # 1. Prompt Validation
@@ -78,86 +84,159 @@ class OllamaClient:
             raise ValueError(f"Prompt validation failed: prompt length {len(prompt)} exceeds MAX_CONTEXT_CHARACTERS limit of {MAX_CONTEXT_CHARACTERS}")
 
         url = f"{self.base_url}/api/generate"
+        
+        # 2. Config options and CPU Mode translation
+        options = OLLAMA_OPTIONS.copy()
+        if LLM_RUNTIME_MODE == "cpu":
+            options["num_gpu"] = 0
+            
         payload = {
             "model": model_name,
             "prompt": prompt,
             "stream": False,
-            "options": {
-                "temperature": 0.0,
-                "num_predict": 300,
-                "num_ctx": 2048
-            }
+            "options": options
         }
         
-        # 2. Payload Validation
+        # Verify payload contains only expected keys
         allowed_keys = {"model", "prompt", "stream", "options"}
         if set(payload.keys()) != allowed_keys:
             raise ValueError(f"Payload validation failed: payload contains unexpected keys: {set(payload.keys()) - allowed_keys}")
-            
-        # Log the payload structure (excluding the full prompt)
-        payload_log = payload.copy()
-        payload_log["prompt"] = f"<PROMPT_PREVIEW: {len(prompt)} characters>"
-        logger.info(f"Ollama API request payload: {payload_log}")
 
-        # 3. Request Diagnostics Logging
         timestamp_str = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        logger.info("Ollama Request Diagnostics:")
-        logger.info(f"- Timestamp: {timestamp_str}")
-        logger.info(f"- Model name: {model_name}")
-        logger.info(f"- Prompt length: {len(prompt)} characters")
-        logger.info(f"- Configured MAX_CONTEXT_CHARACTERS: {MAX_CONTEXT_CHARACTERS}")
-        logger.info("- Stream mode: False")
-        logger.info(f"- Request options: {payload['options']}")
-        logger.info(f"- Prompt preview (first 1000 characters): {prompt[:1000]}")
-
-        # Initialize diagnostics output
+        
+        # Initialize diagnostics
         diagnostics = {
             "model": model_name,
             "prompt_length": len(prompt),
-            "context_limit": MAX_CONTEXT_CHARACTERS,
+            "context_limit": options.get("num_ctx", 1024),
+            "num_predict": options.get("num_predict", 300),
+            "runtime_mode": LLM_RUNTIME_MODE,
+            "runtime_profile": LLM_RUNTIME_PROFILE,
             "request_time": timestamp_str,
             "inference_time_ms": 0.0,
             "http_status": None,
             "returned_characters": 0,
-            "ollama_error": None
+            "ollama_error": None,
+            "gpu_oom_detected": "No",
+            "retry_performed": "No",
+            "final_runtime_mode": "CPU" if options.get("num_gpu", -1) == 0 else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
         }
 
-        # 4. Generate with 180s Timeout & Diagnostic Tracking
-        start_time = time.time()
-        try:
-            response = requests.post(url, json=payload, timeout=180.0)
-            elapsed_time_ms = (time.time() - start_time) * 1000.0
-            diagnostics["inference_time_ms"] = elapsed_time_ms
-            diagnostics["http_status"] = response.status_code
-        except Exception as conn_err:
-            elapsed_time_ms = (time.time() - start_time) * 1000.0
-            diagnostics["inference_time_ms"] = elapsed_time_ms
-            diagnostics["ollama_error"] = str(conn_err)
-            
+        def is_oom_error(err_msg: str) -> bool:
+            oom_indicators = [
+                "out of memory",
+                "cudamalloc failed",
+                "failed to allocate buffer",
+                "failed to allocate kv cache"
+            ]
+            err_lower = err_msg.lower()
+            return any(ind in err_lower for ind in oom_indicators)
+
+        def make_request(current_payload):
+            # Log the payload structure (excluding the full prompt)
+            payload_log = current_payload.copy()
+            payload_log["prompt"] = f"<PROMPT_PREVIEW: {len(prompt)} characters>"
+            logger.info(f"Ollama API request payload: {payload_log}")
+
+            logger.info("Ollama Request Diagnostics:")
+            logger.info(f"- Timestamp: {timestamp_str}")
+            logger.info(f"- Model name: {model_name}")
+            logger.info(f"- Prompt length: {len(prompt)} characters")
+            logger.info(f"- Configured num_ctx: {current_payload['options'].get('num_ctx')}")
+            logger.info("- Stream mode: False")
+            logger.info(f"- Request options: {current_payload['options']}")
+            logger.info(f"- Prompt preview (first 1000 characters): {prompt[:1000]}")
+
+            req_start = time.time()
+            try:
+                res = requests.post(url, json=current_payload, timeout=180.0)
+                elapsed = (time.time() - req_start) * 1000.0
+                return res, elapsed, None
+            except Exception as e:
+                elapsed = (time.time() - req_start) * 1000.0
+                return None, elapsed, str(e)
+
+        # 3. First Attempt
+        response, elapsed_time_ms, conn_err = make_request(payload)
+        diagnostics["inference_time_ms"] = elapsed_time_ms
+
+        if conn_err:
+            diagnostics["ollama_error"] = conn_err
             logger.error("Ollama Response Diagnostics [FAILED]:")
             logger.error(f"- HTTP status: Connection Error")
             logger.error(f"- Total request time: {elapsed_time_ms:.2f} ms")
-            logger.error(f"- Returned response size: N/A")
-            logger.error(f"- Ollama error body: {str(conn_err)}")
-            raise conn_err
+            logger.error(f"- Ollama error body: {conn_err}")
+            raise RuntimeError(f"Ollama API Connection Error: {conn_err}")
 
-        # 5. Response Diagnostics Logging
+        diagnostics["http_status"] = response.status_code
         logger.info("Ollama Response Diagnostics:")
         logger.info(f"- HTTP status: {response.status_code}")
         logger.info(f"- Total request time: {elapsed_time_ms:.2f} ms")
 
-        # 6. Detailed Error Processing
+        # Parse detailed error body if status is not 200
+        error_msg = None
         if response.status_code != 200:
             try:
-                error = response.json().get("error", response.text)
+                error_msg = response.json().get("error", response.text)
             except Exception:
-                error = response.text
-                
-            diagnostics["ollama_error"] = error
-            logger.error(f"- Returned response size: N/A")
-            logger.error(f"- Ollama error body: {error}")
-            raise RuntimeError(f"Ollama API {response.status_code}: {error}")
+                error_msg = response.text
 
+        # 4. Smart OOM Detection & Single Retry with LOW_MEMORY
+        if error_msg and is_oom_error(error_msg):
+            logger.warning(f"Ollama GPU OOM detected: '{error_msg}'. Retrying once using LOW_MEMORY profile...")
+            diagnostics["gpu_oom_detected"] = "Yes"
+            diagnostics["retry_performed"] = "Yes"
+            
+            low_options = OLLAMA_OPTIONS.copy()
+            low_options.update(OLLAMA_PROFILES["LOW_MEMORY"])
+            if LLM_RUNTIME_MODE == "cpu":
+                low_options["num_gpu"] = 0
+            
+            payload["options"] = low_options
+            diagnostics["context_limit"] = low_options.get("num_ctx", 512)
+            diagnostics["num_predict"] = low_options.get("num_predict", 200)
+            diagnostics["runtime_profile"] = "LOW_MEMORY"
+            diagnostics["final_runtime_mode"] = "CPU" if low_options.get("num_gpu", -1) == 0 else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
+            
+            # Second attempt (low context profile)
+            response, elapsed_time_ms, conn_err = make_request(payload)
+            diagnostics["inference_time_ms"] += elapsed_time_ms
+            
+            if conn_err:
+                diagnostics["ollama_error"] = conn_err
+                raise RuntimeError(f"Ollama API Connection Error on Retry: {conn_err}")
+                
+            diagnostics["http_status"] = response.status_code
+            
+            error_msg = None
+            if response.status_code != 200:
+                try:
+                    error_msg = response.json().get("error", response.text)
+                except Exception:
+                    error_msg = response.text
+            
+            if error_msg:
+                diagnostics["ollama_error"] = error_msg
+                logger.error(f"- Returned response size: N/A")
+                logger.error(f"- Ollama error body (Retry Failed): {error_msg}")
+                # Raise custom structured RuntimeError with suggestions
+                raise RuntimeError(
+                    "Model inference failed because the GPU does not have enough available memory.\n\n"
+                    "Suggestions:\n"
+                    "• Close GPU-intensive applications.\n"
+                    "• Restart Ollama.\n"
+                    "• Use the Low Memory runtime profile.\n"
+                    "• Switch to CPU mode.\n"
+                    "• Reduce context size."
+                )
+        elif error_msg:
+            # Failed first attempt with non-OOM error
+            diagnostics["ollama_error"] = error_msg
+            logger.error(f"- Returned response size: N/A")
+            logger.error(f"- Ollama error body: {error_msg}")
+            raise RuntimeError(f"Ollama API {response.status_code}: {error_msg}")
+
+        # 5. Successful Execution Payload Processing
         data = response.json()
         answer = data.get("response", "").strip()
         diagnostics["returned_characters"] = len(answer)

@@ -2,7 +2,14 @@ import time
 import uuid
 from typing import Dict, Any, List
 from src.retrieval.metadata import RetrievalResult
-from src.config.settings import LLM_MODEL_NAME, PROMPT_VERSION, MAX_CONTEXT_CHARACTERS
+from src.config.settings import (
+    LLM_MODEL_NAME, 
+    PROMPT_VERSION, 
+    MAX_CONTEXT_CHARACTERS, 
+    LLM_RUNTIME_MODE, 
+    LLM_RUNTIME_PROFILE, 
+    OLLAMA_OPTIONS
+)
 from src.llm.metadata import GroundedAnswer
 from src.llm.prompt_builder import PromptBuilder
 from src.llm.ollama_client import OllamaClient
@@ -64,12 +71,18 @@ class LLMManager:
                     "model": self.model_name,
                     "prompt_length": 0,
                     "context_length": 0,
-                    "context_limit": MAX_CONTEXT_CHARACTERS,
+                    "context_limit": OLLAMA_OPTIONS.get("num_ctx", 1024),
+                    "num_predict": OLLAMA_OPTIONS.get("num_predict", 300),
+                    "runtime_mode": LLM_RUNTIME_MODE,
+                    "runtime_profile": LLM_RUNTIME_PROFILE,
                     "request_time": timestamp,
                     "inference_time_ms": 0.0,
                     "http_status": None,
                     "returned_characters": 0,
-                    "ollama_error": "No relevant context found during retrieval."
+                    "ollama_error": "No relevant context found during retrieval.",
+                    "gpu_oom_detected": "No",
+                    "retry_performed": "No",
+                    "final_runtime_mode": "CPU" if LLM_RUNTIME_MODE == "cpu" else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
                 }
             )
             
@@ -91,12 +104,18 @@ class LLMManager:
                     "model": self.model_name,
                     "prompt_length": 0,
                     "context_length": 0,
-                    "context_limit": MAX_CONTEXT_CHARACTERS,
+                    "context_limit": OLLAMA_OPTIONS.get("num_ctx", 1024),
+                    "num_predict": OLLAMA_OPTIONS.get("num_predict", 300),
+                    "runtime_mode": LLM_RUNTIME_MODE,
+                    "runtime_profile": LLM_RUNTIME_PROFILE,
                     "request_time": timestamp,
                     "inference_time_ms": 0.0,
                     "http_status": None,
                     "returned_characters": 0,
-                    "ollama_error": "Ollama server is not running."
+                    "ollama_error": "Ollama server is not running.",
+                    "gpu_oom_detected": "No",
+                    "retry_performed": "No",
+                    "final_runtime_mode": "CPU" if LLM_RUNTIME_MODE == "cpu" else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
                 }
             )
             
@@ -118,12 +137,18 @@ class LLMManager:
                     "model": self.model_name,
                     "prompt_length": 0,
                     "context_length": 0,
-                    "context_limit": MAX_CONTEXT_CHARACTERS,
+                    "context_limit": OLLAMA_OPTIONS.get("num_ctx", 1024),
+                    "num_predict": OLLAMA_OPTIONS.get("num_predict", 300),
+                    "runtime_mode": LLM_RUNTIME_MODE,
+                    "runtime_profile": LLM_RUNTIME_PROFILE,
                     "request_time": timestamp,
                     "inference_time_ms": 0.0,
                     "http_status": None,
                     "returned_characters": 0,
-                    "ollama_error": f"Model {self.model_name} is missing."
+                    "ollama_error": f"Model {self.model_name} is missing.",
+                    "gpu_oom_detected": "No",
+                    "retry_performed": "No",
+                    "final_runtime_mode": "CPU" if LLM_RUNTIME_MODE == "cpu" else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
                 }
             )
  
@@ -141,12 +166,18 @@ class LLMManager:
             "model": self.model_name,
             "prompt_length": len(prompt),
             "context_length": len(limited_context),
-            "context_limit": MAX_CONTEXT_CHARACTERS,
+            "context_limit": OLLAMA_OPTIONS.get("num_ctx", 1024),
+            "num_predict": OLLAMA_OPTIONS.get("num_predict", 300),
+            "runtime_mode": LLM_RUNTIME_MODE,
+            "runtime_profile": LLM_RUNTIME_PROFILE,
             "request_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "inference_time_ms": 0.0,
             "http_status": None,
             "returned_characters": 0,
-            "ollama_error": None
+            "ollama_error": None,
+            "gpu_oom_detected": "No",
+            "retry_performed": "No",
+            "final_runtime_mode": "CPU" if LLM_RUNTIME_MODE == "cpu" else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto")
         }
         
         try:

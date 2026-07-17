@@ -61,3 +61,30 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.70
 LLM_MODEL_NAME = "phi3:mini"
 PROMPT_VERSION = "1.0"
 MAX_CONTEXT_CHARACTERS = 4000
+
+# Ollama Runtime Settings
+LLM_RUNTIME_MODE = "auto"  # "auto", "gpu", "cpu"
+LLM_RUNTIME_PROFILE = "BALANCED"  # "LOW_MEMORY", "BALANCED", "QUALITY"
+
+OLLAMA_PROFILES = {
+    "LOW_MEMORY": {
+        "num_ctx": 512,
+        "num_predict": 200
+    },
+    "BALANCED": {
+        "num_ctx": 1024,
+        "num_predict": 300
+    },
+    "QUALITY": {
+        "num_ctx": 2048,
+        "num_predict": 500
+    }
+}
+
+OLLAMA_OPTIONS = {
+    "temperature": 0.0,
+    "num_predict": OLLAMA_PROFILES[LLM_RUNTIME_PROFILE]["num_predict"],
+    "num_ctx": OLLAMA_PROFILES[LLM_RUNTIME_PROFILE]["num_ctx"],
+    "num_gpu": -1,
+    "seed": 42
+}
