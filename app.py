@@ -328,14 +328,19 @@ with st.sidebar:
     
     # Section 4: AI Pipeline
     st.markdown("### 🧠 AI Pipeline")
-    total_embedded = sum(len(f.get("chunks", [])) for f in st.session_state.parsed_files.values())
-    total_indexed = index_info.get("total_vectors", 0)
+    from src.llm import LLMManager
+    llm_manager = LLMManager()
+    ollama_running = llm_manager.client.is_server_running()
+    ollama_status = "Connected 🟢" if ollama_running else "Disconnected 🔴"
     
-    st.markdown(f"• **Embeddings Model:** `MiniLM-L12-v2` 🟢")
+    st.markdown(f"• **Embedding Model:** `MiniLM-L12-v2` 🟢")
     st.markdown(f"• **Embedding Dimension:** `384` 📏")
-    st.markdown(f"• **Embedded Chunks:** `{total_embedded}` 📑")
-    st.markdown(f"• **Indexed Vectors:** `{total_indexed}` 🗂️")
-    st.markdown("• **LLM Model Configured:** *N/A (Coming in M8)*")
+    st.markdown(f"• **Indexed Documents:** `{index_info.get('total_documents', 0)}` 📄")
+    st.markdown(f"• **Indexed Chunks:** `{idx_manager.metadata_store.get_index_stats().get('total_vectors', 0)}` 📑")
+    st.markdown(f"• **Indexed Vectors:** `{idx_manager.engine.total}` 🗂️")
+    st.markdown(f"• **LLM Model:** `{llm_manager.model_name}` 🤖")
+    st.markdown(f"• **Ollama Status:** `{ollama_status}`")
+    st.markdown(f"• **Retrieval Status:** `Active 🟢`")
     
     st.markdown("---")
     
@@ -344,7 +349,9 @@ with st.sidebar:
     avg_time = total_proc_time / total_files if total_files > 0 else 0.0
     st.markdown(f"• **Total Parse Time:** {total_proc_time:.2f}s")
     st.markdown(f"• **Avg Time / File:** {avg_time:.2f}s")
-    st.markdown("• **Query Latency:** *N/A (Coming in M7)*")
+    if st.session_state.get("retrieval_latencies", []):
+        avg_ret = sum(st.session_state.retrieval_latencies) / len(st.session_state.retrieval_latencies)
+        st.markdown(f"• **Avg Query Latency:** {avg_ret:.2f}ms")
     
     st.markdown("---")
     if st.button("Clear Parsing Memory", type="primary", use_container_width=True):
