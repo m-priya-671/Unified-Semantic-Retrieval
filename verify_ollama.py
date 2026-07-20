@@ -104,6 +104,23 @@ class TestOllamaClient(unittest.TestCase):
         answer, stats, diag = self.client.generate("phi3:mini", prompt)
         self.assertEqual(diag["prompt_length"], MAX_CONTEXT_CHARACTERS)
 
+    @patch("requests.post")
+    def test_prompt_exceeding_limit_defensive_trimming(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "response": "Trimmed prompt response.",
+            "prompt_eval_count": 1000,
+            "eval_count": 20
+        }
+        mock_post.return_value = mock_response
+        
+        # Exceeding context size should apply defensive trimming without raising ValueError
+        too_long_prompt = "A" * (MAX_CONTEXT_CHARACTERS + 500)
+        answer, stats, diag = self.client.generate("phi3:mini", too_long_prompt)
+        self.assertEqual(answer, "Trimmed prompt response.")
+        self.assertLessEqual(diag["prompt_length"], MAX_CONTEXT_CHARACTERS)
+
     def test_invalid_prompt_validations(self):
         # Empty string
         with self.assertRaises(ValueError) as ctx:
@@ -119,12 +136,6 @@ class TestOllamaClient(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx3:
             self.client.generate("phi3:mini", None)
         self.assertIn("prompt is None", str(ctx3.exception))
-        
-        # Exceeding context size
-        too_long_prompt = "A" * (MAX_CONTEXT_CHARACTERS + 1)
-        with self.assertRaises(ValueError) as ctx4:
-            self.client.generate("phi3:mini", too_long_prompt)
-        self.assertIn("exceeds MAX_CONTEXT_CHARACTERS limit", str(ctx4.exception))
 
     @patch("requests.post")
     def test_timeout_handling(self, mock_post):

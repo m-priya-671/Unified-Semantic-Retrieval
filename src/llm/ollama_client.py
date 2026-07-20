@@ -97,7 +97,7 @@ class OllamaClient:
         )
         import time
         
-        # 1. Prompt Validation
+        # 1. Prompt Validation & Defensive Trimming
         if prompt is None:
             raise ValueError("Prompt validation failed: prompt is None")
         if not isinstance(prompt, str):
@@ -105,7 +105,11 @@ class OllamaClient:
         if not prompt.strip():
             raise ValueError("Prompt validation failed: prompt is empty or contains only whitespace")
         if len(prompt) > MAX_CONTEXT_CHARACTERS:
-            raise ValueError(f"Prompt validation failed: prompt length {len(prompt)} exceeds MAX_CONTEXT_CHARACTERS limit of {MAX_CONTEXT_CHARACTERS}")
+            logger.warning(
+                f"Prompt length ({len(prompt)}) exceeds MAX_CONTEXT_CHARACTERS ({MAX_CONTEXT_CHARACTERS}). "
+                "Applying defensive trimming pass."
+            )
+            prompt = prompt[:MAX_CONTEXT_CHARACTERS]
 
         url = f"{self.base_url}/api/generate"
         

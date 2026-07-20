@@ -154,10 +154,11 @@ class LLMManager:
  
         # 4. Prompt construction & context length check
         start_prompt = time.time()
-        prompt, limited_context, chunks_used = PromptBuilder.build(
+        prompt, limited_context, chunks_used, pb_diag = PromptBuilder.build(
             query=retrieval_result.query,
             chunks=retrieval_result.retrieved_chunks,
-            max_context_chars=MAX_CONTEXT_CHARACTERS
+            max_context_chars=MAX_CONTEXT_CHARACTERS,
+            return_diagnostics=True
         )
         prompt_time = (time.time() - start_prompt) * 1000.0
  
@@ -182,6 +183,7 @@ class LLMManager:
             "final_runtime_used": "CPU" if LLM_RUNTIME_MODE == "cpu" else ("GPU" if LLM_RUNTIME_MODE == "gpu" else "auto"),
             "cpu_fallback_triggered": False
         }
+        diagnostics.update(pb_diag)
         
         try:
             start_inf = time.time()
