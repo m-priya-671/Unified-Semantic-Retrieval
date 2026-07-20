@@ -721,6 +721,14 @@ with tab_chat:
                         st.markdown(f"• **Average Similarity:** `{msg.get('average_similarity', 0.0):.4f}`")
                         
                         diag = msg.get("diagnostics", {})
+                        st.markdown("##### 🛡️ Response Validation Diagnostics")
+                        st.markdown(f"• **Validation Passed:** `{diag.get('validation_passed', True)}`")
+                        st.markdown(f"• **Validation Failed:** `{diag.get('validation_failed', False)}`")
+                        st.markdown(f"• **Validation Reason:** `{diag.get('validation_reason', 'Passed')}`")
+                        st.markdown(f"• **Unsupported Claims Found:** `{diag.get('unsupported_claims_found', [])}`")
+                        st.markdown(f"• **Unsupported Entities Found:** `{diag.get('unsupported_entities_found', [])}`")
+                        st.markdown(f"• **Semantic Similarity Score:** `{diag.get('semantic_similarity_score', 1.0):.2f}`")
+                        
                         st.markdown("##### 📏 Prompt Budget & Context Utilization")
                         st.markdown(f"• **MAX_CONTEXT_CHARACTERS:** `{diag.get('max_context_characters', 4000)}`")
                         st.markdown(f"• **System Prompt Characters:** `{diag.get('system_prompt_chars', 0)}`")
@@ -849,6 +857,14 @@ with tab_chat:
                     st.markdown(f"• **Highest Similarity:** `{result.highest_similarity:.4f}`")
                     st.markdown(f"• **Lowest Similarity:** `{result.lowest_similarity:.4f}`")
                     st.markdown(f"• **Average Similarity:** `{result.average_similarity:.4f}`")
+                    
+                    st.markdown("##### 🛡️ Response Validation Diagnostics")
+                    st.markdown(f"• **Validation Passed:** `{diag.get('validation_passed', True)}`")
+                    st.markdown(f"• **Validation Failed:** `{diag.get('validation_failed', False)}`")
+                    st.markdown(f"• **Validation Reason:** `{diag.get('validation_reason', 'Passed')}`")
+                    st.markdown(f"• **Unsupported Claims Found:** `{diag.get('unsupported_claims_found', [])}`")
+                    st.markdown(f"• **Unsupported Entities Found:** `{diag.get('unsupported_entities_found', [])}`")
+                    st.markdown(f"• **Semantic Similarity Score:** `{diag.get('semantic_similarity_score', 1.0):.2f}`")
                     
                     st.markdown("##### 📏 Prompt Budget & Context Utilization")
                     st.markdown(f"• **MAX_CONTEXT_CHARACTERS:** `{diag.get('max_context_characters', 4000)}`")

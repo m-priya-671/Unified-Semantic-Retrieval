@@ -165,7 +165,7 @@ class TestPromptBuilder(unittest.TestCase):
         - No chunk is truncated.
         """
         query = "Skip and continue test"
-        max_limit = 1100
+        max_limit = 1300
         prompt_empty, _, _, diag_empty = PromptBuilder.build_with_diagnostics(
             query=query,
             chunks=[],

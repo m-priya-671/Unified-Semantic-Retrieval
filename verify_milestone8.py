@@ -105,7 +105,7 @@ def test_no_context_retrieval():
     ans = manager.generate_grounded_answer(ret_res)
     assert ans.success is False
     assert ans.reason == "NO_RELEVANT_CONTEXT"
-    assert "Please upload documents related to this topic." in ans.answer
+    assert "limited information" in ans.answer or "Please upload documents" in ans.answer
     logger.info("No-Context Fallback boundary check: OK")
 
 def test_pre_inference_availability():
@@ -205,7 +205,7 @@ def test_response_validators():
     ans_hallucinate = manager.generate_grounded_answer(ret_res)
     assert ans_hallucinate.success is False
     assert ans_hallucinate.reason == "VALIDATION_FAILED"
-    assert "could not be validated against the retrieved documents" in ans_hallucinate.answer
+    assert "limited information" in ans_hallucinate.answer or "could not be validated" in ans_hallucinate.answer
     logger.info("Validation catches empty texts and hallucinated entity names -> OK")
 
 def test_summaries_and_overviews_neighbors():

@@ -8,11 +8,22 @@ class PromptBuilder:
     SYSTEM_PROMPT = (
         "You are an expert AI assistant providing strictly grounded answers based ONLY on the provided context.\n"
         "Follow these response rules:\n"
-        "1. Answer the user question relying ONLY on the clear facts present in the Context section below.\n"
-        "2. If the Context does not contain the answer, state: \"I am sorry, but the provided documents do not contain the information to answer this question.\" Do not attempt to guess or fabricate.\n"
-        "3. Do NOT use any pre-existing or external general knowledge outside of the Context.\n"
-        "4. Keep the response concise, objective, and directly relevant to the query.\n"
-        "5. If the query or context is in Tamil, answer in Tamil. If in English, answer in English. Maintain multilingual alignment."
+        "1. Answer the user request relying ONLY on the clear facts present in the Context section below.\n"
+        "2. Natural paraphrasing, rewording, sentence restructuring, and summarization are encouraged. Do NOT copy verbatim unless necessary.\n"
+        "3. Do NOT invent facts, numbers, dates, names, or unsupported claims.\n"
+        "4. If the Context does not contain the necessary information, state: \"The uploaded document contains limited information related to your question, so a detailed answer cannot be generated from the available content.\"\n"
+        "5. Keep the response concise, objective, and directly relevant to the query.\n"
+        "6. If the query or context is in Tamil, answer in Tamil. If in English, answer in English. Maintain multilingual alignment."
+    )
+
+    SUMMARY_SYSTEM_PROMPT = (
+        "You are an expert AI assistant providing strictly grounded document summaries based ONLY on the provided context.\n"
+        "Follow these summary rules:\n"
+        "1. Generate a clear, concise, and well-structured summary using key facts, main topics, and essential details present in the Context below.\n"
+        "2. Paraphrasing, rewording, and synthesis are encouraged. Do NOT look for a pre-existing summary section; synthesize from the available content.\n"
+        "3. Do NOT invent facts, statistics, names, or external information.\n"
+        "4. If the Context contains insufficient meaningful text, state: \"The uploaded document contains limited information related to your question, so a detailed answer cannot be generated from the available content.\"\n"
+        "5. If the query or context is in Tamil, answer in Tamil. If in English, answer in English."
     )
 
     @classmethod
@@ -21,7 +32,8 @@ class PromptBuilder:
         query: str,
         chunks: List[RetrievalChunk],
         max_context_chars: int = 4000,
-        return_diagnostics: bool = False
+        return_diagnostics: bool = False,
+        intent: str = "QUESTION"
     ) -> Any:
         """Filters chunks using prompt budgeting and skip-and-continue selection.
         
@@ -30,6 +42,7 @@ class PromptBuilder:
             chunks: List of retrieved chunks.
             max_context_chars: Hard limit for final prompt character count.
             return_diagnostics: If True, returns a 4-tuple including diagnostics dictionary.
+            intent: Query intent ("QUESTION" or "SUMMARY").
             
         Returns:
             Tuple of (full_prompt_string, limited_context_string, chunks_used_count)
@@ -38,7 +51,8 @@ class PromptBuilder:
         prompt, limited_context, chunks_used, diag = cls.build_with_diagnostics(
             query=query,
             chunks=chunks,
-            max_context_chars=max_context_chars
+            max_context_chars=max_context_chars,
+            intent=intent
         )
         if return_diagnostics:
             return prompt, limited_context, chunks_used, diag
@@ -49,7 +63,8 @@ class PromptBuilder:
         cls,
         query: str,
         chunks: List[RetrievalChunk],
-        max_context_chars: int = 4000
+        max_context_chars: int = 4000,
+        intent: str = "QUESTION"
     ) -> Tuple[str, str, int, Dict[str, Any]]:
         """Calculates prompt budget and assembles context using skip-and-continue selection.
         
@@ -57,16 +72,19 @@ class PromptBuilder:
             query: Sanitized user query string.
             chunks: List of retrieved chunks.
             max_context_chars: Hard limit for final prompt character count.
+            intent: Query intent string.
             
         Returns:
             Tuple of (final_prompt, limited_context, chunks_included_count, diagnostics_dict)
         """
         safe_query = query if query is not None else ""
-        system_prompt_chars = len(cls.SYSTEM_PROMPT)
+        system_text = cls.SUMMARY_SYSTEM_PROMPT if intent == "SUMMARY" else cls.SYSTEM_PROMPT
+        
+        system_prompt_chars = len(system_text)
         question_chars = len(safe_query)
         
         # Template prefix & suffix
-        template_prefix = f"{cls.SYSTEM_PROMPT}\n\n[Context]\n"
+        template_prefix = f"{system_text}\n\n[Context]\n"
         template_suffix = f"\n\n[Question]\n{safe_query}\n\nAnswer:"
         
         template_chars = len(template_prefix) + len(template_suffix) - system_prompt_chars - question_chars

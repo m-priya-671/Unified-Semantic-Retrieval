@@ -51,6 +51,7 @@ class LLMManager:
         # 1. No-Context Handling
         if not retrieval_result.success:
             logger.info("Skipping model inference: RetrievalResult reports failure.")
+            fallback_msg = "The uploaded document contains limited information related to your question, so a detailed answer cannot be generated from the available content."
             latency_metrics = {
                 "prompt_construction_time_ms": 0.0,
                 "inference_time_ms": 0.0,
@@ -60,8 +61,8 @@ class LLMManager:
             return GroundedAnswer(
                 success=False,
                 reason="NO_RELEVANT_CONTEXT",
-                message="No relevant information matching your query was found in the indexed documents. Please upload documents related to this topic.",
-                answer="No relevant information matching your query was found in the indexed documents. Please upload documents related to this topic.",
+                message=fallback_msg,
+                answer=fallback_msg,
                 conversation_id=conversation_id,
                 question_id=question_id,
                 timestamp=timestamp,
@@ -158,7 +159,8 @@ class LLMManager:
             query=retrieval_result.query,
             chunks=retrieval_result.retrieved_chunks,
             max_context_chars=MAX_CONTEXT_CHARACTERS,
-            return_diagnostics=True
+            return_diagnostics=True,
+            intent=retrieval_result.intent
         )
         prompt_time = (time.time() - start_prompt) * 1000.0
  
@@ -224,22 +226,26 @@ class LLMManager:
             )
  
         # 6. Response Quality & Entity Validation
-        is_valid = ResponseValidator.validate(raw_answer, limited_context, retrieval_result.query)
+        is_valid, val_diag = ResponseValidator.validate_detailed(
+            raw_answer, limited_context, retrieval_result.query, intent=retrieval_result.intent
+        )
+        diagnostics.update(val_diag)
+        
         if not is_valid:
-            msg = "I am sorry, but the model generated a response that could not be validated against the retrieved documents. Please verify your query or upload more context."
-            logger.warning("Generation discarded due to validation checks failure.")
+            fallback_msg = "The uploaded document contains limited information related to your question, so a detailed answer cannot be generated from the available content."
+            logger.warning(f"Generation discarded due to validation check failure: {val_diag.get('validation_reason')}")
             latency_metrics = {
                 "prompt_construction_time_ms": prompt_time,
                 "inference_time_ms": inference_time,
                 "formatting_time_ms": 0.0,
                 "total_response_latency_ms": (time.time() - start_total) * 1000.0
             }
-            diagnostics["ollama_error"] = "Grounded response validation failed (hallucinated entity or empty output)."
+            diagnostics["ollama_error"] = f"Grounded response validation failed: {val_diag.get('validation_reason')}"
             return GroundedAnswer(
                 success=False,
                 reason="VALIDATION_FAILED",
-                message=msg,
-                answer=msg,
+                message=fallback_msg,
+                answer=fallback_msg,
                 conversation_id=conversation_id,
                 question_id=question_id,
                 timestamp=timestamp,
