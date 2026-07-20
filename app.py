@@ -631,30 +631,64 @@ with tab_ingest:
 
     st.markdown("---")
     st.markdown("### 📋 Uploaded Files Metadata Cards")
-    for name, file_data in st.session_state.parsed_files.items():
-        ext = file_data["file_type"]
-        pages_count = len(file_data["documents"])
-        
-        with st.expander(f"📄 {name} Information Card"):
-            info_data = {
-                "Metric": ["Filename", "Type", "Pages/Blocks", "Chunks Size", "Embedding Status", "Indexed Status", "Processing Time"],
-                "Value": [
-                    file_data["file_name"],
-                    ext.upper(),
-                    f"{pages_count} blocks/pages",
-                    str(len(file_data.get("chunks", []))),
-                    "L2-Normalized (384-dim) 🟢",
-                    "Indexed in FAISS 🟢",
-                    f"{file_data.get('processing_time', 0.0):.2f}s"
-                ]
-            }
-            st.table(info_data)
+    if st.session_state.parsed_files:
+        for name, file_data in st.session_state.parsed_files.items():
+            ext = file_data["file_type"]
+            pages_count = len(file_data["documents"])
             
-            # Displays audio/image players
-            if ext in ["png", "jpg", "jpeg", "bmp", "tiff"]:
-                st.image(file_data["file_path"], use_container_width=True)
-            elif ext in ["mp3", "wav", "m4a", "flac"]:
-                st.audio(file_data["file_path"])
+            with st.expander(f"📄 {name} Information Card"):
+                info_data = {
+                    "Metric": ["Filename", "Type", "Pages/Blocks", "Chunks Size", "Embedding Status", "Indexed Status", "Processing Time"],
+                    "Value": [
+                        file_data["file_name"],
+                        ext.upper(),
+                        f"{pages_count} blocks/pages",
+                        str(len(file_data.get("chunks", []))),
+                        "L2-Normalized (384-dim) 🟢",
+                        "Indexed in FAISS 🟢",
+                        f"{file_data.get('processing_time', 0.0):.2f}s"
+                    ]
+                }
+                st.table(info_data)
+                
+                # Displays audio/image players
+                if ext in ["png", "jpg", "jpeg", "bmp", "tiff"]:
+                    st.image(file_data["file_path"], use_container_width=True)
+                elif ext in ["mp3", "wav", "m4a", "flac"]:
+                    st.audio(file_data["file_path"])
+    else:
+        # Fallback to persistent SQLite document metadata
+        sqlite_docs = idx_manager.metadata_store.get_all_documents()
+        if not sqlite_docs:
+            st.info("No uploaded metadata cards available. Upload files above to view info cards.")
+        else:
+            for d in sqlite_docs:
+                file_name = d["file_name"] or "Unknown"
+                ext = file_name.split(".")[-1].lower() if "." in file_name else "doc"
+                indexed_chunks = d["indexed_chunks"]
+                status = d["index_status"]
+                last_idx = d["last_indexed"]
+                file_path = UPLOAD_DIR / file_name
+                
+                with st.expander(f"📄 {file_name} Information Card"):
+                    info_data = {
+                        "Metric": ["Filename", "Type", "Indexed Chunks", "Embedding Status", "Indexed Status", "Last Indexed"],
+                        "Value": [
+                            file_name,
+                            ext.upper(),
+                            str(indexed_chunks),
+                            "L2-Normalized (384-dim) 🟢",
+                            f"{status} 🟢",
+                            last_idx
+                        ]
+                    }
+                    st.table(info_data)
+                    
+                    if file_path.exists():
+                        if ext in ["png", "jpg", "jpeg", "bmp", "tiff"]:
+                            st.image(str(file_path), use_container_width=True)
+                        elif ext in ["mp3", "wav", "m4a", "flac"]:
+                            st.audio(str(file_path))
 
 with tab_chat:
     st.markdown("### 💬 Grounded Chat Q&A")
